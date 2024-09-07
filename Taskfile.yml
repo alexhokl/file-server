@@ -104,3 +104,10 @@ tasks:
     cmds:
     - psql "{{.CONNECTION_STRING}}" -c "TRUNCATE TABLE user_credentials; DELETE FROM users;"
 
+  caddy:
+    desc: Start reverse proxy to port {{.PORT}}
+    silent: true
+    preconditions:
+    - test -f Caddyfile
+    cmds:
+    - caddy run --config Caddyfile
