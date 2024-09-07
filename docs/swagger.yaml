@@ -1,0 +1,223 @@
+definitions:
+  api.createUserCredentialRequest:
+    properties:
+      public_key:
+        description: PublicKey is the public key of the user
+        example: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDZ cardno:000607000043
+        type: string
+    required:
+    - public_key
+    type: object
+  api.createUserCredentialResponse:
+    properties:
+      created_at:
+        description: CreatedAt is the time when the user credential is added and it
+          has the format of RFC3339
+        example: "2024-01-01T00:00:00Z"
+        type: string
+      id:
+        description: ID is the ID of the user credential created
+        example: 10
+        type: integer
+      public_key:
+        description: PublicKey is the public key of the user
+        example: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDZ cardno:000607000043
+        type: string
+      username:
+        description: Username is the username of the user
+        example: alice
+        type: string
+    type: object
+  api.createUserRequest:
+    properties:
+      username:
+        description: Username is the username of the user
+        example: alice
+        type: string
+    required:
+    - username
+    type: object
+  api.createdUserResponse:
+    properties:
+      username:
+        description: Username is the username of the user
+        example: alice
+        type: string
+    type: object
+  api.credentialInfo:
+    properties:
+      id:
+        description: ID is the ID of the user credential
+        example: 10
+        type: integer
+      public_key:
+        description: PublicKey is the public key of the user
+        example: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDZ cardno:000607000043
+        type: string
+    type: object
+info:
+  contact: {}
+paths:
+  /users:
+    get:
+      consumes:
+      - application/json
+      description: List all users
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: list of user names
+          schema:
+            items:
+              type: string
+            type: array
+      summary: List users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: Create a new user
+      parameters:
+      - description: User information
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.createUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.createdUserResponse'
+        "400":
+          description: empty username
+        "409":
+          description: username already exists
+        "500":
+          description: unable to create user
+      summary: Create user
+      tags:
+      - users
+  /users/{username}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a user
+      parameters:
+      - description: Username
+        in: path
+        name: username
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: user deleted
+        "400":
+          description: empty username
+        "404":
+          description: user not found
+        "500":
+          description: unable to delete user
+      summary: Delete user
+      tags:
+      - users
+  /users/{username}/credentials:
+    get:
+      consumes:
+      - application/json
+      description: List all credentials of a user
+      parameters:
+      - description: Username
+        in: path
+        name: username
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/api.credentialInfo'
+            type: array
+        "400":
+          description: empty username
+        "404":
+          description: user not found
+        "500":
+          description: unable to retrieve user credentials
+      summary: List user credentials
+      tags:
+      - credentials
+    post:
+      consumes:
+      - application/json
+      description: Create a new credential for a user
+      parameters:
+      - description: Username
+        in: path
+        name: username
+        required: true
+        type: string
+      - description: Credential information
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.createUserCredentialRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.createUserCredentialResponse'
+        "400":
+          description: empty username or invalid public key
+        "404":
+          description: user not found
+        "409":
+          description: public key already exists
+        "500":
+          description: unable to create user credential
+      summary: Create user credential
+      tags:
+      - credentials
+  /users/{username}/credentials/{credential_id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a credential of a user
+      parameters:
+      - description: Username
+        in: path
+        name: username
+        required: true
+        type: string
+      - description: Credential ID
+        in: path
+        name: credential_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: credential deleted
+        "400":
+          description: empty username or credential ID
+        "404":
+          description: credential not found
+        "500":
+          description: unable to delete user credential
+      summary: Delete user credential
+      tags:
+      - credentials
+swagger: "2.0"

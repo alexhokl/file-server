@@ -111,3 +111,25 @@ tasks:
     - test -f Caddyfile
     cmds:
     - caddy run --config Caddyfile
+
+  swagger:
+    desc: Generate code of Swagger 2.0 documentation
+    silent: true
+    cmds:
+    - swag init
+
+  swagger-format:
+    desc: Format Swagger comments in Go code
+    silent: true
+    cmds:
+    - swag fmt
+
+  swagger-open:
+    desc: Open Swagger documentation in a browser
+    silent: true
+    cmds:
+    - cmd: open http://{{.SITE}}/swagger/index.html
+      platforms: [darwin, linux]
+    - cmd: explorer http://{{.SITE}}/swagger/index.html
+      platforms: [windows]
+

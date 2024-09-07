@@ -12,6 +12,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// ListUsers godoc
+//	@Summary		List users
+//	@Description	List all users
+//	@Tags			users
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{array}	string	"list of user names"
+//	@Router			/users [get]
 func ListUsers(c *gin.Context) {
 	dbConn, ok := getDatabaseConnectionFromContext(c)
 	if !ok {
@@ -31,6 +39,18 @@ func ListUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, users)
 }
 
+// CreateUser godoc
+//	@Summary		Create user
+//	@Description	Create a new user
+//	@Tags			users
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		createUserRequest	true	"User information"
+//	@Success		201		{object}	createdUserResponse
+//	@Failure		400		"empty username"
+//	@Failure		409		"username already exists"
+//	@Failure		500		"unable to create user"
+//	@Router			/users [post]
 func CreateUser(c *gin.Context) {
 	var req createUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -71,6 +91,18 @@ func CreateUser(c *gin.Context) {
 	c.JSON(http.StatusCreated, viewModel)
 }
 
+// DeleteUser godoc
+//	@Summary		Delete user
+//	@Description	Delete a user
+//	@Tags			users
+//	@Accept			json
+//	@Produce		json
+//	@Param			username	path	string	true	"Username"
+//	@Success		204			"user deleted"
+//	@Failure		400			"empty username"
+//	@Failure		404			"user not found"
+//	@Failure		500			"unable to delete user"
+//	@Router			/users/{username} [delete]
 func DeleteUser(c *gin.Context) {
 	username := c.Param("username")
 	if username == "" {
@@ -103,6 +135,18 @@ func DeleteUser(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// ListUserCredentials godoc
+//	@Summary		List user credentials
+//	@Description	List all credentials of a user
+//	@Tags			credentials
+//	@Accept			json
+//	@Produce		json
+//	@Param			username	path	string	true	"Username"
+//	@Success		200			{array}	credentialInfo
+//	@Failure		400			"empty username"
+//	@Failure		404			"user not found"
+//	@Failure		500			"unable to retrieve user credentials"
+//	@Router			/users/{username}/credentials [get]
 func ListUserCredentials(c *gin.Context) {
 	username := c.Param("username")
 	if username == "" {
@@ -131,6 +175,20 @@ func ListUserCredentials(c *gin.Context) {
 	c.JSON(http.StatusOK, keys)
 }
 
+// CreateUserCredential godoc
+//	@Summary		Create user credential
+//	@Description	Create a new credential for a user
+//	@Tags			credentials
+//	@Accept			json
+//	@Produce		json
+//	@Param			username	path		string						true	"Username"
+//	@Param			request		body		createUserCredentialRequest	true	"Credential information"
+//	@Success		201			{object}	createUserCredentialResponse
+//	@Failure		400			"empty username or invalid public key"
+//	@Failure		404			"user not found"
+//	@Failure		409			"public key already exists"
+//	@Failure		500			"unable to create user credential"
+//	@Router			/users/{username}/credentials [post]
 func CreateUserCredential(c *gin.Context) {
 	username := c.Param("username")
 	if username == "" {
@@ -213,6 +271,19 @@ func CreateUserCredential(c *gin.Context) {
 	c.JSON(http.StatusCreated, viewModel)
 }
 
+// DeleteUserCredential godoc
+//	@Summary		Delete user credential
+//	@Description	Delete a credential of a user
+//	@Tags			credentials
+//	@Accept			json
+//	@Produce		json
+//	@Param			username		path	string	true	"Username"
+//	@Param			credential_id	path	string	true	"Credential ID"
+//	@Success		204				"credential deleted"
+//	@Failure		400				"empty username or credential ID"
+//	@Failure		404				"credential not found"
+//	@Failure		500				"unable to delete user credential"
+//	@Router			/users/{username}/credentials/{credential_id} [delete]
 func DeleteUserCredential(c *gin.Context) {
 	credentialID := c.Param("credential_id")
 	if credentialID == "" {
