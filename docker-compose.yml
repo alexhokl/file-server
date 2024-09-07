@@ -1,0 +1,33 @@
+services:
+
+  db:
+    image: docker.io/postgres:16-alpine3.18
+    environment:
+      POSTGRES_PASSWORD_FILE: /mnt/credentials/database_password
+      POSTGRES_USER: appuser
+      POSTGRES_DB: file_server
+      PGDATA: var/lib/postgresql/data/pgdata
+    ports:
+      - 5432:5432
+    volumes:
+      - "$PWD/data/database:/var/lib/postgresql/data"
+      - "$PWD/keys/database_password:/mnt/credentials/database_password:ro"
+      - "$PWD/database/extension.sql:/docker-entrypoint-initdb.d/extension.sql:ro"
+
+  file-server:
+    image: docker.io/alexhokl/file-server:dev
+    environment:
+      FILESERVER_HOST_KEY: "/mnt/keys/ecdsa.key"
+      FILESERVER_SSH_PORT: "8822"
+      FILESERVER_API_PORT: "8880"
+      FILESERVER_PATH_USERS_DIRECTORY: "/mnt/data/files"
+      FILESERVER_PATH_DATABASE_CONNECTION_STRING: "/mnt/keys/database_connection_string"
+      FILESERVER_ADMINISTRATIVE_USERS: alex
+      GIN_MODE: release
+    ports:
+      - 8080:8080
+      - 8822:8822
+    volumes:
+      - "$PWD/keys/database_connection_string_docker:/mnt/keys/database_connection_string:ro"
+      - "$PWD/keys/ecdsa.key:/mnt/keys/ecdsa.key:ro"
+      - "$PWD/data/files:/mnt/data/files"
