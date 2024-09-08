@@ -73,6 +73,14 @@ tasks:
     - sh: docker version
     cmd: docker compose down
 
+  logs:
+    desc: Show logs of file-server
+    silent: true
+    preconditions:
+    - test -f docker-compose.yml
+    - sh: docker version
+    cmd: docker compose logs file-server -f
+
   commit:
     desc: Show the current git commit ID
     silent: true
