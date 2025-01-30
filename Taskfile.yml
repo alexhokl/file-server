@@ -15,6 +15,41 @@ tasks:
     cmds:
     - go test -v ./...
 
+  coverage:
+    desc: Unit test with coverage
+    cmd: go test --cover ./...
+
+  coverage-html:
+    desc: Test with coverage in HTML
+    cmd: go test -coverprofile=coverage.out ./... && go tool cover -html=coverage.out -o coverage.html
+
+  open-coverage-html:
+    desc: Test with coverage in HTML and open the HTML
+    cmds:
+    - task coverage-html
+    - open coverage.html
+
+  bench:
+    desc: Run benchmarks on CPU and memory
+    cmd: go test -bench=. -benchmem ./...
+
+  bench-profile:
+    desc: Run benchmarks on CPU and memory and create a profile
+    cmds:
+    - go test -bench=. -benchmem -memprofile ./benchmarks/api.mem.prof -cpuprofile ./benchmarks/api.cpu.prof ./api/
+    - go test -bench=. -benchmem -memprofile ./benchmarks/db.mem.prof -cpuprofile ./benchmarks/db.cpu.prof ./db/
+    - go test -bench=. -benchmem -memprofile ./benchmarks/docs.mem.prof -cpuprofile ./benchmarks/docs.cpu.prof ./docs/
+    - go test -bench=. -benchmem -memprofile ./benchmarks/handler.mem.prof -cpuprofile ./benchmarks/handler.cpu.prof ./handler/
+    - go test -bench=. -benchmem -memprofile ./benchmarks/main.mem.prof -cpuprofile ./benchmarks/main.cpu.prof ./
+
+  lint:
+    desc: Lint
+    cmd: golangci-lint run
+
+  sec:
+    desc: Security check
+    cmd: gosec ./...
+
   run:
     desc: Run
     # deps: [up-db, swagger]

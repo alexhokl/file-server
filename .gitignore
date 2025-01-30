@@ -22,3 +22,7 @@ go.work
 
 data/
 keys/
+
+coverage.html
+benchmarks/
+
