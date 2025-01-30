@@ -58,7 +58,14 @@ func main() {
 	}
 
 	slog.Info("database connection established")
-	db.Migrate(dbConn)
+	err = db.Migrate(dbConn)
+	if err != nil {
+		slog.Error(
+			"unable to migrate database",
+			slog.String("error", err.Error()),
+		)
+		os.Exit(1)
+	}
 	slog.Info("database migration completed")
 
 	config, err := getConfiguration(dbConn)

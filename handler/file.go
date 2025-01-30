@@ -19,9 +19,16 @@ func GetFileSessionHandler(pathUsersDirectory string) func(ssh.Session) {
 		)
 		logger.Info("file session started")
 
-		homePath := filepath.Join(pathUsersDirectory, sess.User())
+		homePath := filepath.Clean(filepath.Join(pathUsersDirectory, sess.User()))
 		if !iohelper.IsDirectoryExist(homePath) {
-			iohelper.CreateDirectory(homePath)
+			err := iohelper.CreateDirectory(homePath)
+			if err != nil {
+				logger.Error(
+					"unable to create user directory",
+					slog.String("error", err.Error()),
+				)
+				return
+			}
 		}
 
 		debugStream := io.Discard

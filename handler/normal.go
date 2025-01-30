@@ -15,12 +15,18 @@ func HandleNormalSession(sess ssh.Session) {
 		slog.String("local", sess.LocalAddr().String()),
 	)
 	logger.Info("normal session")
-	io.WriteString(
+	_, err := io.WriteString(
 		sess,
 		fmt.Sprintf(
 			"Hi %s! You have successfully authenticated, but file server does not provide shell access.\n",
 			sess.User(),
 		),
 	)
+	if err != nil {
+		slog.Error(
+			"unable to serve response",
+			slog.String("error", err.Error()),
+		)
+		return
+	}
 }
-

@@ -13,6 +13,7 @@ import (
 )
 
 // ListUsers godoc
+//
 //	@Summary		List users
 //	@Description	List all users
 //	@Tags			users
@@ -40,6 +41,7 @@ func ListUsers(c *gin.Context) {
 }
 
 // CreateUser godoc
+//
 //	@Summary		Create user
 //	@Description	Create a new user
 //	@Tags			users
@@ -92,6 +94,7 @@ func CreateUser(c *gin.Context) {
 }
 
 // DeleteUser godoc
+//
 //	@Summary		Delete user
 //	@Description	Delete a user
 //	@Tags			users
@@ -136,6 +139,7 @@ func DeleteUser(c *gin.Context) {
 }
 
 // ListUserCredentials godoc
+//
 //	@Summary		List user credentials
 //	@Description	List all credentials of a user
 //	@Tags			credentials
@@ -176,6 +180,7 @@ func ListUserCredentials(c *gin.Context) {
 }
 
 // CreateUserCredential godoc
+//
 //	@Summary		Create user credential
 //	@Description	Create a new credential for a user
 //	@Tags			credentials
@@ -211,10 +216,18 @@ func CreateUserCredential(c *gin.Context) {
 			slog.String("username", username),
 			slog.String("public_key", req.PublicKey),
 		)
-		c.AbortWithError(
+		ginErr := c.AbortWithError(
 			http.StatusBadRequest,
 			fmt.Errorf("unable to parse public key"),
 		)
+		if ginErr != nil {
+			slog.Error(
+				"unable to serve error response (unable to parse public key)",
+				slog.String("error", err.Error()),
+				slog.String("gin_error", ginErr.Error()),
+			)
+			c.Status(http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -272,6 +285,7 @@ func CreateUserCredential(c *gin.Context) {
 }
 
 // DeleteUserCredential godoc
+//
 //	@Summary		Delete user credential
 //	@Description	Delete a credential of a user
 //	@Tags			credentials
