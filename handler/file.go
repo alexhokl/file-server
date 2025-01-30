@@ -45,7 +45,12 @@ func GetFileSessionHandler(pathUsersDirectory string) func(ssh.Session) {
 			return
 		}
 		if err := server.Serve(); err == io.EOF {
-			server.Close()
+			if err := server.Close(); err != nil {
+				logger.Error(
+					"unable to close server",
+					slog.String("error", err.Error()),
+				)
+			}
 			logger.Info("sftp client exited session.")
 		} else if err != nil {
 			logger.Error("sftp server completed with error", slog.String("error", err.Error()))

@@ -22,6 +22,7 @@ import (
 )
 
 const SHUTDOWN_TIMEOUT_IN_SECONDS = 10
+const HTTP_SERVER_READ_HEADER_TIMEOUT_IN_SECONDS = 5
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -137,8 +138,9 @@ func main() {
 	}
 
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", config.APIServerPort),
-		Handler: apiRouter,
+		Addr:              fmt.Sprintf(":%d", config.APIServerPort),
+		Handler:           apiRouter,
+		ReadHeaderTimeout: HTTP_SERVER_READ_HEADER_TIMEOUT_IN_SECONDS * time.Second,
 	}
 
 	go func() {
