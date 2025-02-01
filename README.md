@@ -18,3 +18,9 @@ environment variables
 - server port
 - directory path to data storage
 - list of administrative users
+
+## References
+
+- [SSH File Transfer
+  Protocol](https://filezilla-project.org/specs/draft-ietf-secsh-filexfer-02.txt#section-6.3)
+- [Request based SFTP API - pkg/sftp](https://github.com/pkg/sftp/blob/master/request-readme.md)
