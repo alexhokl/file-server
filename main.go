@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+	"gorm.io/gorm"
 
 	"github.com/alexhokl/file-server/api"
 	"github.com/alexhokl/file-server/db"
@@ -113,7 +114,7 @@ func main() {
 			// "sftp": handler.GetFileSessionHandler(config.PathUsersDirectory),
 			"sftp": handler.GetFileSystemRequestHandler(config.PathUsersDirectory),
 		},
-		PublicKeyHandler: getPublicKeyHandler(config.Users),
+		PublicKeyHandler: getPublicKeyHandler(dbConn),
 		HostSigners:      []ssh.Signer{hostkey},
 	}
 
@@ -173,25 +174,40 @@ func main() {
 	slog.Info("Server exiting")
 }
 
-func getPublicKeyHandler(users map[string][]string) ssh.PublicKeyHandler {
+func getPublicKeyHandler(dbConn *gorm.DB) ssh.PublicKeyHandler {
 	return func(ctx ssh.Context, key ssh.PublicKey) bool {
-		if keyStrings, ok := users[ctx.User()]; ok {
-			for _, keyString := range keyStrings {
-				expectedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(keyString))
-				if err != nil {
-					slog.Error(
-						"unable to parse public key",
-						slog.String("error", err.Error()),
-						slog.String("user", ctx.User()),
-						slog.String("remote", ctx.RemoteAddr().String()),
-						slog.String("local", ctx.LocalAddr().String()),
-						slog.String("key", keyString),
-					)
-					continue
-				}
-				if ssh.KeysEqual(key, expectedKey) {
-					return true
-				}
+		var credentials []db.UserCredential
+		tx := dbConn.Where("username = ?", ctx.User()).Find(&credentials)
+		if tx.Error != nil {
+			slog.Error(
+				"unable to get user credential",
+				slog.String("error", tx.Error.Error()),
+				slog.String("user", ctx.User()),
+			)
+			return false
+		}
+		if len(credentials) == 0 {
+			slog.Info(
+				"no credentials found",
+				slog.String("user", ctx.User()),
+			)
+			return false
+		}
+		for _, c := range credentials {
+			expectedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(c.PublicKey))
+			if err != nil {
+				slog.Error(
+					"unable to parse public key",
+					slog.String("error", err.Error()),
+					slog.String("user", ctx.User()),
+					slog.String("remote", ctx.RemoteAddr().String()),
+					slog.String("local", ctx.LocalAddr().String()),
+					slog.String("key", c.PublicKey),
+				)
+				continue
+			}
+			if ssh.KeysEqual(key, expectedKey) {
+				return true
 			}
 		}
 		return false
