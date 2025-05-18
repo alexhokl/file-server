@@ -1,10 +1,10 @@
-version: '3'
+version: "3"
 
 env:
+  APP_NAME: file-server
   KO_DOCKER_REPO: docker.io/alexhokl
 
 tasks:
-
   build:
     desc: Go build without output
     cmd: go build -o /dev/null
@@ -13,7 +13,7 @@ tasks:
     desc: Run unit tests
     silent: true
     cmds:
-    - go test -v ./...
+      - go test -v ./...
 
   coverage:
     desc: Unit test with coverage
@@ -26,8 +26,8 @@ tasks:
   open-coverage-html:
     desc: Test with coverage in HTML and open the HTML
     cmds:
-    - task coverage-html
-    - open coverage.html
+      - task coverage-html
+      - open coverage.html
 
   bench:
     desc: Run benchmarks on CPU and memory
@@ -36,11 +36,11 @@ tasks:
   bench-profile:
     desc: Run benchmarks on CPU and memory and create a profile
     cmds:
-    - go test -bench=. -benchmem -memprofile ./benchmarks/api.mem.prof -cpuprofile ./benchmarks/api.cpu.prof ./api/
-    - go test -bench=. -benchmem -memprofile ./benchmarks/db.mem.prof -cpuprofile ./benchmarks/db.cpu.prof ./db/
-    - go test -bench=. -benchmem -memprofile ./benchmarks/docs.mem.prof -cpuprofile ./benchmarks/docs.cpu.prof ./docs/
-    - go test -bench=. -benchmem -memprofile ./benchmarks/handler.mem.prof -cpuprofile ./benchmarks/handler.cpu.prof ./handler/
-    - go test -bench=. -benchmem -memprofile ./benchmarks/main.mem.prof -cpuprofile ./benchmarks/main.cpu.prof ./
+      - go test -bench=. -benchmem -memprofile ./benchmarks/api.mem.prof -cpuprofile ./benchmarks/api.cpu.prof ./api/
+      - go test -bench=. -benchmem -memprofile ./benchmarks/db.mem.prof -cpuprofile ./benchmarks/db.cpu.prof ./db/
+      - go test -bench=. -benchmem -memprofile ./benchmarks/docs.mem.prof -cpuprofile ./benchmarks/docs.cpu.prof ./docs/
+      - go test -bench=. -benchmem -memprofile ./benchmarks/handler.mem.prof -cpuprofile ./benchmarks/handler.cpu.prof ./handler/
+      - go test -bench=. -benchmem -memprofile ./benchmarks/main.mem.prof -cpuprofile ./benchmarks/main.cpu.prof ./
 
   lint:
     desc: Lint
@@ -68,52 +68,52 @@ tasks:
   tidy:
     desc: Tidy up Go modules
     cmds:
-    - go mod tidy
+      - go mod tidy
 
   image:
     desc: Docker build via ko
     silent: true
     preconditions:
-    - sh: ko version
+      - sh: ko version
     cmd: ko build -L -B --platform linux/amd64 -t dev .
 
   up-db:
     desc: Spin up Docker containers of databases
     silent: true
     preconditions:
-    - test -f docker-compose.yml
-    - sh: docker version
+      - test -f docker-compose.yml
+      - sh: docker version
     cmd: docker compose up db -d
 
   up:
     desc: Spin up all Docker containers
     silent: true
     preconditions:
-    - test -f docker-compose.yml
+      - test -f docker-compose.yml
     cmd: docker compose up -d
 
   stop:
     desc: Stop all Docker containers
     silent: true
     preconditions:
-    - test -f docker-compose.yml
-    - sh: docker version
+      - test -f docker-compose.yml
+      - sh: docker version
     cmd: docker compose stop
 
   down:
     desc: Stop and remove all Docker containers
     silent: true
     preconditions:
-    - test -f docker-compose.yml
-    - sh: docker version
+      - test -f docker-compose.yml
+      - sh: docker version
     cmd: docker compose down
 
   logs:
     desc: Show logs of file-server
     silent: true
     preconditions:
-    - test -f docker-compose.yml
-    - sh: docker version
+      - test -f docker-compose.yml
+      - sh: docker version
     cmd: docker compose logs file-server -f
 
   commit:
@@ -123,56 +123,63 @@ tasks:
       GIT_COMMIT:
         sh: git rev-parse --short HEAD
     cmds:
-    - echo {{.GIT_COMMIT}}
+      - echo {{.GIT_COMMIT}}
 
   gen-key:
     desc: Generate keys
     interactive: true
     preconditions:
-    - test -d keys
+      - test -d keys
     cmds:
-    - step crypto keypair keys/ecdsa.pub keys/ecdsa.key --kty EC --curve "P-256" --force --insecure --no-password
+      - step crypto keypair keys/ecdsa.pub keys/ecdsa.key --kty EC --curve "P-256" --force --insecure --no-password
 
   db-remove-all:
     desc: remove all data in database
     silent: true
     preconditions:
-    - sh: "[ ! -z \"$(which psql)\" ]"
-      msg: psql is not installed
-    - sh: "[ ! -z \"$(which cat)\" ]"
-      msg: cat is not installed
+      - sh: '[ ! -z "$(which psql)" ]'
+        msg: psql is not installed
+      - sh: '[ ! -z "$(which cat)" ]'
+        msg: cat is not installed
     vars:
       CONNECTION_STRING:
         sh: cat keys/database_connection_string
     cmds:
-    - psql "{{.CONNECTION_STRING}}" -c "TRUNCATE TABLE user_credentials; DELETE FROM users;"
+      - psql "{{.CONNECTION_STRING}}" -c "TRUNCATE TABLE user_credentials; DELETE FROM users;"
 
   caddy:
     desc: Start reverse proxy to port {{.PORT}}
     silent: true
     preconditions:
-    - test -f Caddyfile
+      - test -f Caddyfile
     cmds:
-    - caddy run --config Caddyfile
+      - caddy run --config Caddyfile
 
   swagger:
     desc: Generate code of Swagger 2.0 documentation
     silent: true
     cmds:
-    - swag init
+      - swag init
 
   swagger-format:
     desc: Format Swagger comments in Go code
     silent: true
     cmds:
-    - swag fmt
+      - swag fmt
 
   swagger-open:
     desc: Open Swagger documentation in a browser
     silent: true
     cmds:
-    - cmd: open http://{{.SITE}}/swagger/index.html
-      platforms: [darwin, linux]
-    - cmd: explorer http://{{.SITE}}/swagger/index.html
-      platforms: [windows]
+      - cmd: open http://{{.SITE}}/swagger/index.html
+        platforms: [darwin, linux]
+      - cmd: explorer http://{{.SITE}}/swagger/index.html
+        platforms: [windows]
 
+  completion-mac:
+    desc: Generate bash completion and save to homebrew
+    cmd: $APP_NAME completion bash > /opt/homebrew/etc/bash_completion.d/$APP_NAME
+
+  completion-linux:
+    desc: Generate bash completion and save configuration directory
+    cmd: $APP_NAME completion bash | sudo tee /etc/bash_completion.d/$APP_NAME
