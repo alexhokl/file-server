@@ -365,15 +365,19 @@ func (f FileSystemLister) ListAt(ls []os.FileInfo, offset int64) (int, error) {
 
 func getFileFlags(flags sftp.FileOpenFlags) int {
 	var fileFlags int
-	if flags.Read {
+	switch {
+	case flags.Read && flags.Write:
+		// O_RDONLY is zero, so combining it with O_WRONLY would silently yield
+		// a write-only handle.
+		fileFlags |= os.O_RDWR
+	case flags.Write:
+		fileFlags |= os.O_WRONLY
+	default:
 		fileFlags |= os.O_RDONLY
 	}
-	if flags.Write {
-		fileFlags |= os.O_WRONLY
-	}
-	if flags.Append {
-		fileFlags |= os.O_APPEND
-	}
+	// O_APPEND is deliberately not translated. It conflicts with WriteAt: the
+	// kernel forces every write to end-of-file and ignores the supplied
+	// offset, which corrupts transfers that arrive out of order.
 	if flags.Creat {
 		fileFlags |= os.O_CREATE
 	}

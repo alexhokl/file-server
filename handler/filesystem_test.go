@@ -19,7 +19,7 @@ import (
 const (
 	pflagRead   = 0x00000001
 	pflagWrite  = 0x00000002
-	pflagAppend = 0x00000004 //nolint:unused // used once append flag handling lands
+	pflagAppend = 0x00000004
 	pflagCreat  = 0x00000008
 	pflagTrunc  = 0x00000010
 	pflagExcl   = 0x00000020
@@ -258,8 +258,27 @@ func TestGetFileFlags(t *testing.T) {
 			want:  os.O_WRONLY,
 		},
 		{
+			// O_RDONLY is zero, so a naive bitwise combination would yield a
+			// write-only handle and break reads on a read/write handle.
+			name:  "read and write maps to O_RDWR",
+			flags: pflagRead | pflagWrite,
+			want:  os.O_RDWR,
+		},
+		{
 			name:  "typical upload",
 			flags: pflagWrite | pflagCreat | pflagTrunc,
+			want:  os.O_WRONLY | os.O_CREATE | os.O_TRUNC,
+		},
+		{
+			// pkg/sftp documents that O_APPEND conflicts with WriteAt: it
+			// forces every write to end-of-file and ignores the offset.
+			name:  "append is stripped because it conflicts with WriteAt",
+			flags: pflagWrite | pflagCreat | pflagAppend,
+			want:  os.O_WRONLY | os.O_CREATE,
+		},
+		{
+			name:  "append is stripped on an upload that also truncates",
+			flags: pflagWrite | pflagCreat | pflagTrunc | pflagAppend,
 			want:  os.O_WRONLY | os.O_CREATE | os.O_TRUNC,
 		},
 		{
