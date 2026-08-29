@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"log/slog"
 	"os"
@@ -25,6 +26,9 @@ const (
 	pflagTrunc  = 0x00000010
 	pflagExcl   = 0x00000020
 )
+
+// sshFileXferAttrSize is the SSH_FILEXFER_ATTR_SIZE attribute flag.
+const sshFileXferAttrSize = 0x00000001
 
 // packetSize mirrors defaultMaxTxPacket in pkg/sftp: the maximum payload the
 // request server passes to a single WriteAt call. Uploads larger than this are
@@ -525,4 +529,27 @@ func TestContainmentDoesNotDependOnSFTPCleaning(t *testing.T) {
 			assert.NoFileExists(t, filepath.Join(filepath.Dir(dir), "secret.txt"))
 		})
 	}
+}
+
+func TestFilecmd_SetstatTruncate(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	path := filepath.Join(dir, "truncate.txt")
+	require.NoError(t, os.WriteFile(path, []byte("0123456789"), 0o600))
+
+	// For SETSTAT the attribute flags live in Request.Flags, and Attrs holds
+	// only the values: here a single 64-bit size.
+	attrs := make([]byte, 8)
+	binary.BigEndian.PutUint64(attrs, 4)
+
+	r := newRequest("Setstat", "/truncate.txt", sshFileXferAttrSize)
+	r.Attrs = attrs
+	require.True(t, r.AttrFlags().Size, "the request should carry a size attribute")
+	require.Equal(t, int64(4), getFileSize(r))
+
+	require.NoError(t, h.Filecmd(r), "Setstat with a size should truncate the file")
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("0123"), got)
 }

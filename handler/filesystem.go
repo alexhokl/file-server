@@ -229,7 +229,9 @@ func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
 			slog.String("path", name),
 		)
 		logger.Info("Setstat")
-		file, err := h.root.Open(name)
+		// Opened for writing: ftruncate requires a writable descriptor and
+		// fails with EINVAL on a read-only one.
+		file, err := h.root.OpenFile(name, os.O_WRONLY, 0)
 		if err != nil {
 			return fmt.Errorf("unable to open file [%s]: %w", name, err)
 		}
