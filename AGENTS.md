@@ -23,7 +23,7 @@ Single test/package: `go test ./api/ -run TestName`.
 - `docker-compose.yml` also needs `keys/database_password`, `keys/database_connection_string_docker`, and `database/extension.sql` — none are in the repo.
 - Schema is GORM `AutoMigrate` in `db/helper.go`, run at startup. There are no migration files; change `db/models.go` instead.
 - SSH auth is public-key only, checked against the `user_credentials` table (`getPublicKeyHandler` in `main.go`). No shell: `handler.HandleNormalSession` rejects normal sessions.
-- SFTP uses the request-based server (`handler/filesystem.go`, `GetFileSystemRequestHandler`). `handler/file.go` is the older `sftp.NewServer` path, still present but wired out in `main.go`.
+- SFTP uses the request-based server (`handler/filesystem.go`, `GetFileSystemRequestHandler`) and that is the only SFTP path. Do not switch to `sftp.NewServer`: it serves from the root of the filesystem, and `WithServerWorkingDirectory` only rebases *relative* paths, so absolute paths from the client escape the user directory. It exposes no filesystem or path hook, so it cannot be confined from the outside. An earlier handler using it was removed for this reason.
 - Each SSH user is chrooted-by-convention to `<path_users_directory>/<username>`, auto-created on first session.
 - `api/middleware.go` `isAdmin()` is a stub that returns `true` — the API is effectively unauthenticated. Treat as known TODO, don't assume auth exists.
 - Two listeners: SSH on `FILESERVER_SSH_PORT`, HTTP API on `FILESERVER_API_PORT`, both shut down on SIGINT/SIGTERM with a 10s timeout.

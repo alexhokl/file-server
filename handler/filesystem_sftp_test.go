@@ -194,3 +194,79 @@ func TestSFTPStatAndMkdir(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, created.IsDir())
 }
+
+// TestSFTPAbsolutePathIsConfined checks that an absolute path from the client
+// resolves inside the user directory rather than at the real filesystem root.
+//
+// This is the property that made the request-based server the only viable
+// choice. The built-in sftp.NewServer applies its working directory to
+// relative paths only and passes absolute paths straight to the os package,
+// so a client could read or write anywhere the process had permission.
+//
+// The assertions are deliberately positive: the write is arranged to succeed
+// so that the test proves the path was rebased under the user directory,
+// rather than passing merely because the operation failed.
+func TestSFTPAbsolutePathIsConfined(t *testing.T) {
+	client, dir := newSFTPTestPair(t)
+
+	// Give the confined location somewhere to land, so a successful write
+	// demonstrates redirection instead of an incidental "no such file".
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "etc"), 0o700))
+
+	f, err := client.Create("/etc/confinement-probe")
+	require.NoError(t, err, "an absolute path should resolve inside the user directory")
+	_, err = f.Write([]byte("probe"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	// It landed under the user directory, not at the real /etc.
+	got, err := os.ReadFile(filepath.Join(dir, "etc", "confinement-probe"))
+	require.NoError(t, err, "the write should land under the user directory")
+	assert.Equal(t, []byte("probe"), got)
+	assert.NoFileExists(t, "/etc/confinement-probe", "must never write outside the user directory")
+
+	// Reading a file that exists on the real filesystem must not reach it.
+	// /etc/hosts exists on the platforms this runs on, so a handler that
+	// leaked absolute paths would open it and return real content.
+	if _, err := os.Stat("/etc/hosts"); err == nil {
+		_, err := client.Open("/etc/hosts")
+		assert.Error(t, err, "must not be able to read a real absolute path")
+	}
+
+	// The user directory is the client's root.
+	g, err := client.Create("/at-root.txt")
+	require.NoError(t, err)
+	require.NoError(t, g.Close())
+	assert.FileExists(t, filepath.Join(dir, "at-root.txt"))
+}
+
+// TestSFTPParentTraversalIsConfined checks that ".." segments cannot walk out
+// of the user directory. As above, the writes are expected to succeed and be
+// rebased inside the user directory.
+func TestSFTPParentTraversalIsConfined(t *testing.T) {
+	client, dir := newSFTPTestPair(t)
+
+	// The parent of the user directory is a real, writable location, which is
+	// what an escape would target.
+	parent := filepath.Dir(dir)
+	require.DirExists(t, parent)
+
+	f, err := client.Create("../escaped.txt")
+	require.NoError(t, err)
+	_, err = f.Write([]byte("escaped"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	assert.FileExists(t, filepath.Join(dir, "escaped.txt"), "the traversal should be rebased into the user directory")
+	assert.NoFileExists(t, filepath.Join(parent, "escaped.txt"), "must not write into the parent directory")
+
+	f2, err := client.Create("/../../escaped-abs.txt")
+	require.NoError(t, err)
+	_, err = f2.Write([]byte("escaped"))
+	require.NoError(t, err)
+	require.NoError(t, f2.Close())
+
+	assert.FileExists(t, filepath.Join(dir, "escaped-abs.txt"))
+	assert.NoFileExists(t, filepath.Join(parent, "escaped-abs.txt"), "must not write above the user directory")
+	assert.NoFileExists(t, filepath.Join(filepath.Dir(parent), "escaped-abs.txt"))
+}

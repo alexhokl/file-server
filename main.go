@@ -111,7 +111,6 @@ func main() {
 		Addr:    fmt.Sprintf(":%d", config.SSHServerPort),
 		Handler: handler.HandleNormalSession,
 		SubsystemHandlers: map[string]ssh.SubsystemHandler{
-			// "sftp": handler.GetFileSessionHandler(config.PathUsersDirectory),
 			"sftp": handler.GetFileSystemRequestHandler(config.PathUsersDirectory),
 		},
 		PublicKeyHandler: getPublicKeyHandler(dbConn),
