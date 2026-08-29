@@ -107,11 +107,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	sftpHandler, err := handler.GetFileSystemRequestHandler(config.PathUsersDirectory)
+	if err != nil {
+		slog.Error(
+			"unable to create SFTP handler",
+			slog.String("error", err.Error()),
+		)
+		os.Exit(1)
+	}
+
 	server := ssh.Server{
 		Addr:    fmt.Sprintf(":%d", config.SSHServerPort),
 		Handler: handler.HandleNormalSession,
 		SubsystemHandlers: map[string]ssh.SubsystemHandler{
-			"sftp": handler.GetFileSystemRequestHandler(config.PathUsersDirectory),
+			"sftp": sftpHandler,
 		},
 		PublicKeyHandler: getPublicKeyHandler(dbConn),
 		HostSigners:      []ssh.Signer{hostkey},

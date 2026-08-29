@@ -26,7 +26,11 @@ func newSFTPTestPair(t *testing.T) (*sftp.Client, string) {
 	t.Helper()
 
 	dir := t.TempDir()
-	handlers := getFileSystemRequestHandler("testuser", dir)
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+
+	handlers := getFileSystemRequestHandler("testuser", root)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -269,4 +273,125 @@ func TestSFTPParentTraversalIsConfined(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, "escaped-abs.txt"))
 	assert.NoFileExists(t, filepath.Join(parent, "escaped-abs.txt"), "must not write above the user directory")
 	assert.NoFileExists(t, filepath.Join(filepath.Dir(parent), "escaped-abs.txt"))
+}
+
+// TestSFTPSymlinkEscapeIsBlocked checks that a symlink inside the user
+// directory cannot be used to reach files outside it.
+//
+// SFTP clients cannot create symlinks here (Filecmd rejects Symlink and Link),
+// but symlinks can arrive by other means: a restored backup, an administrator,
+// or another process writing into the data volume. Joining the client path onto
+// the user directory does not defend against them, because the os package
+// follows symlinks during resolution.
+func TestSFTPSymlinkEscapeIsBlocked(t *testing.T) {
+	client, dir := newSFTPTestPair(t)
+
+	// A directory outside the user's root, holding a file the user must not
+	// be able to reach.
+	secretDir := t.TempDir()
+	secretPath := filepath.Join(secretDir, "secret.txt")
+	require.NoError(t, os.WriteFile(secretPath, []byte("top secret"), 0o600))
+
+	// Plant symlinks inside the user directory pointing out of it.
+	require.NoError(t, os.Symlink(secretDir, filepath.Join(dir, "escape-dir")))
+	require.NoError(t, os.Symlink(secretPath, filepath.Join(dir, "escape-file.txt")))
+
+	t.Run("read through a symlinked directory", func(t *testing.T) {
+		f, err := client.Open("/escape-dir/secret.txt")
+		if err == nil {
+			defer func() { _ = f.Close() }()
+			contents, _ := io.ReadAll(f)
+			t.Fatalf("read a file outside the user directory: %q", contents)
+		}
+	})
+
+	t.Run("read through a symlinked file", func(t *testing.T) {
+		f, err := client.Open("/escape-file.txt")
+		if err == nil {
+			defer func() { _ = f.Close() }()
+			contents, _ := io.ReadAll(f)
+			t.Fatalf("read a file outside the user directory: %q", contents)
+		}
+	})
+
+	t.Run("write through a symlinked directory", func(t *testing.T) {
+		f, err := client.Create("/escape-dir/planted.txt")
+		if err == nil {
+			_, _ = f.Write([]byte("planted"))
+			_ = f.Close()
+		}
+		assert.NoFileExists(t, filepath.Join(secretDir, "planted.txt"),
+			"must not create files outside the user directory")
+	})
+
+	t.Run("overwrite through a symlinked file", func(t *testing.T) {
+		f, err := client.Create("/escape-file.txt")
+		if err == nil {
+			_, _ = f.Write([]byte("overwritten"))
+			_ = f.Close()
+		}
+		got, readErr := os.ReadFile(secretPath)
+		require.NoError(t, readErr)
+		assert.Equal(t, []byte("top secret"), got, "must not overwrite a file outside the user directory")
+	})
+}
+
+// TestSFTPSymlinkInsideRootStillWorks guards against over-blocking: symlinks
+// that stay within the user directory must continue to resolve.
+func TestSFTPSymlinkInsideRootStillWorks(t *testing.T) {
+	client, dir := newSFTPTestPair(t)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "real"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "real", "target.txt"), []byte("inside"), 0o600))
+
+	// A relative symlink pointing at a sibling inside the user directory.
+	require.NoError(t, os.Symlink("real/target.txt", filepath.Join(dir, "link.txt")))
+
+	f, err := client.Open("/link.txt")
+	require.NoError(t, err, "a symlink that stays inside the root should resolve")
+	defer func() { _ = f.Close() }()
+
+	got, err := io.ReadAll(f)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("inside"), got)
+}
+
+// TestMaliciousUsernameCannotEscape checks that a username is confined to a
+// single directory beneath the users directory. The username reaches the
+// handler from the SSH layer and is only as trustworthy as the rows in the
+// user table, which the admin API creates without validating.
+func TestMaliciousUsernameCannotEscape(t *testing.T) {
+	usersDir := t.TempDir()
+
+	// A sibling of the users directory, standing in for anything an escape
+	// might try to reach.
+	outside := filepath.Join(filepath.Dir(usersDir), "outside-target")
+	require.NoError(t, os.MkdirAll(outside, 0o700))
+
+	usersRoot, err := os.OpenRoot(usersDir)
+	require.NoError(t, err)
+	defer func() { _ = usersRoot.Close() }()
+
+	hostile := []string{"..", "../escaped", "../outside-target", "/etc", "a/../..", `..\escaped`}
+
+	for _, username := range hostile {
+		t.Run(username, func(t *testing.T) {
+			// Either the name is rejected outright, or os.Root refuses it.
+			if err := validateUsername(username); err != nil {
+				return
+			}
+			err := usersRoot.Mkdir(username, 0o700)
+			assert.Error(t, err, "os.Root must refuse a username that escapes the users directory")
+
+			_, err = usersRoot.OpenRoot(username)
+			assert.Error(t, err)
+		})
+	}
+
+	// Nothing was created outside the users directory.
+	entries, err := os.ReadDir(outside)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "must not create anything outside the users directory")
+
+	assert.NoDirExists(t, filepath.Join(filepath.Dir(usersDir), "escaped"))
 }

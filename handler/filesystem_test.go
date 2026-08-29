@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -44,7 +45,11 @@ func newTestHandler(t *testing.T) (*FileSystemRequestHandler, string) {
 	t.Helper()
 
 	dir := t.TempDir()
-	handlers := getFileSystemRequestHandler("testuser", dir)
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = root.Close() })
+
+	handlers := getFileSystemRequestHandler("testuser", root)
 
 	h, ok := handlers.FilePut.(*FileSystemRequestHandler)
 	require.True(t, ok, "FilePut should be a *FileSystemRequestHandler")
@@ -410,6 +415,114 @@ func TestFilecmd_UnsupportedMethods(t *testing.T) {
 	for _, method := range []string{"Link", "Symlink", "PosixRename", "StatVFS"} {
 		t.Run(method, func(t *testing.T) {
 			assert.Error(t, h.Filecmd(newRequest(method, "/f", 0)))
+		})
+	}
+}
+
+func TestToRootRelative(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: "."},
+		{name: "root", in: "/", want: "."},
+		{name: "dot", in: ".", want: "."},
+		{name: "simple absolute", in: "/file.txt", want: "file.txt"},
+		{name: "simple relative", in: "file.txt", want: "file.txt"},
+		{name: "nested", in: "/a/b/c.txt", want: "a/b/c.txt"},
+		{name: "trailing slash", in: "/a/b/", want: "a/b"},
+		{name: "duplicate separators", in: "//a///b", want: "a/b"},
+		{name: "interior dot", in: "/a/./b", want: "a/b"},
+		{name: "interior parent", in: "/a/../b", want: "b"},
+		{name: "leading parent", in: "../etc/passwd", want: "etc/passwd"},
+		{name: "absolute parent", in: "/../etc/passwd", want: "etc/passwd"},
+		{name: "many parents", in: "/a/../../../../etc/passwd", want: "etc/passwd"},
+		{name: "only parents", in: "../../..", want: "."},
+		{name: "parent of root", in: "/..", want: "."},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := toRootRelative(tc.in)
+			assert.Equal(t, tc.want, got)
+
+			// Whatever the input, the result must never be absolute or start
+			// with a parent reference, which os.Root would reject outright.
+			assert.False(t, strings.HasPrefix(got, "/"), "result must not be absolute")
+			assert.False(t, got == ".." || strings.HasPrefix(got, "../"), "result must not escape")
+		})
+	}
+}
+
+func TestValidateUsername(t *testing.T) {
+	valid := []string{"alice", "bob.smith", "user-1", "UPPER", "a_b", "user@example.com"}
+	for _, username := range valid {
+		t.Run("valid/"+username, func(t *testing.T) {
+			assert.NoError(t, validateUsername(username))
+		})
+	}
+
+	invalid := []string{"", ".", "..", "../evil", "a/b", "/etc", "etc/", `back\slash`, "nul\x00byte"}
+	for _, username := range invalid {
+		t.Run("invalid/"+username, func(t *testing.T) {
+			assert.ErrorIs(t, validateUsername(username), errInvalidUsername)
+		})
+	}
+}
+
+// TestContainmentDoesNotDependOnSFTPCleaning feeds the handler request paths
+// that pkg/sftp never cleaned.
+//
+// sftp.NewRequest runs the path through the library's own cleaning, so tests
+// built on it cannot distinguish our containment from the library's. These
+// requests set Filepath directly, which is what a different SFTP library, a
+// future change upstream, or any other caller of this handler could produce.
+func TestContainmentDoesNotDependOnSFTPCleaning(t *testing.T) {
+	// A file outside the user directory that must stay unreachable.
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "secret.txt")
+	require.NoError(t, os.WriteFile(outsidePath, []byte("top secret"), 0o600))
+
+	// Raw, uncleaned paths, including an absolute path to the real file.
+	hostile := []string{
+		"../secret.txt",
+		"../../secret.txt",
+		"a/../../secret.txt",
+		"/../secret.txt",
+		filepath.Join(outsideDir, "secret.txt"),
+		outsidePath,
+	}
+
+	for _, requestPath := range hostile {
+		t.Run(requestPath, func(t *testing.T) {
+			h, dir := newTestHandler(t)
+
+			// Bypass sftp.NewRequest's cleaning by setting Filepath directly.
+			read := &sftp.Request{Method: "Get", Filepath: requestPath, Flags: pflagRead}
+			if _, err := h.Fileread(read); err == nil {
+				t.Fatalf("read escaped the user directory via %q", requestPath)
+			}
+
+			write := &sftp.Request{
+				Method:   "Put",
+				Filepath: requestPath,
+				Flags:    pflagWrite | pflagCreat | pflagTrunc,
+			}
+			if w, err := h.Filewrite(write); err == nil {
+				_, _ = w.WriteAt([]byte("planted"), 0)
+				if c, ok := w.(io.Closer); ok {
+					_ = c.Close()
+				}
+			}
+
+			// The outside file is untouched and nothing was planted next to it.
+			got, err := os.ReadFile(outsidePath)
+			require.NoError(t, err)
+			assert.Equal(t, []byte("top secret"), got, "must not modify a file outside the user directory")
+
+			// Anything that did get created stayed inside the user directory.
+			assert.NoFileExists(t, filepath.Join(filepath.Dir(dir), "secret.txt"))
 		})
 	}
 }

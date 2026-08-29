@@ -1,43 +1,86 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
-	"path/filepath"
+	"path"
+	"strings"
 	"syscall"
 
-	"github.com/alexhokl/helper/iohelper"
 	"github.com/gliderlabs/ssh"
 	"github.com/pkg/sftp"
 )
 
 const defaultFileWritePermission = 0600
 const defaultFileReadPermission = 0400
+const defaultDirectoryPermission = 0700
 
-func GetFileSystemRequestHandler(pathUsersDirectory string) func(ssh.Session) {
+// errInvalidUsername is returned when a username cannot be used as a single
+// directory name beneath the users directory.
+var errInvalidUsername = errors.New("username is not a valid directory name")
+
+// GetFileSystemRequestHandler returns an SFTP session handler serving each user
+// a directory beneath pathUsersDirectory.
+//
+// The users directory is opened once as an *os.Root, and every session derives
+// its own root from it. Containment therefore does not depend on string
+// manipulation, on the username being well formed, or on pkg/sftp having
+// already cleaned the requested path.
+func GetFileSystemRequestHandler(pathUsersDirectory string) (func(ssh.Session), error) {
+	usersRoot, err := os.OpenRoot(pathUsersDirectory)
+	if err != nil {
+		return nil, fmt.Errorf("unable to open users directory [%s]: %w", pathUsersDirectory, err)
+	}
+
 	return func(sess ssh.Session) {
+		username := sess.User()
 		logger := slog.With(
-			slog.String("user", sess.User()),
+			slog.String("user", username),
 			slog.String("remote", sess.RemoteAddr().String()),
 			slog.String("local", sess.LocalAddr().String()),
 		)
 		logger.Info("file session started")
 
-		homePath := filepath.Clean(filepath.Join(pathUsersDirectory, sess.User()))
-		if !iohelper.IsDirectoryExist(homePath) {
-			err := iohelper.CreateDirectory(homePath)
-			if err != nil {
-				logger.Error(
-					"unable to create user directory",
-					slog.String("error", err.Error()),
-				)
-				return
-			}
+		// Rejected explicitly so the failure is legible. os.Root would refuse
+		// these anyway, but with an error about escaping paths.
+		if err := validateUsername(username); err != nil {
+			logger.Error(
+				"unable to open user directory",
+				slog.String("error", err.Error()),
+			)
+			return
 		}
 
-		requestHandler := getFileSystemRequestHandler(sess.User(), homePath)
+		if err := usersRoot.Mkdir(username, defaultDirectoryPermission); err != nil && !errors.Is(err, fs.ErrExist) {
+			logger.Error(
+				"unable to create user directory",
+				slog.String("error", err.Error()),
+			)
+			return
+		}
+
+		userRoot, err := usersRoot.OpenRoot(username)
+		if err != nil {
+			logger.Error(
+				"unable to open user directory",
+				slog.String("error", err.Error()),
+			)
+			return
+		}
+		defer func() {
+			if err := userRoot.Close(); err != nil {
+				logger.Error(
+					"unable to close user directory",
+					slog.String("error", err.Error()),
+				)
+			}
+		}()
+
+		requestHandler := getFileSystemRequestHandler(username, userRoot)
 
 		serverOptions := []sftp.RequestServerOption{}
 		server := sftp.NewRequestServer(
@@ -60,13 +103,41 @@ func GetFileSystemRequestHandler(pathUsersDirectory string) func(ssh.Session) {
 			)
 		}
 		logger.Info("file session completed")
-	}
+	}, nil
 }
 
-func getFileSystemRequestHandler(username string, fileDirectory string) sftp.Handlers {
+// validateUsername reports whether a username can be used as a single
+// directory name directly beneath the users directory.
+func validateUsername(username string) error {
+	if username == "" || username == "." || username == ".." {
+		return fmt.Errorf("%w: %q", errInvalidUsername, username)
+	}
+	if strings.ContainsAny(username, `/\`) || strings.ContainsRune(username, 0) {
+		return fmt.Errorf("%w: %q", errInvalidUsername, username)
+	}
+	return nil
+}
+
+// toRootRelative converts a path supplied by an SFTP client into a path
+// relative to the user's root.
+//
+// Every request path is treated as absolute within that root, so cleaning
+// collapses any ".." that would otherwise climb out: "/a/../../b" becomes "b".
+// This is deliberately independent of pkg/sftp, which performs a similar
+// cleaning of its own; if either changes, os.Root still refuses to resolve
+// outside the root.
+func toRootRelative(requestPath string) string {
+	relative := strings.TrimPrefix(path.Clean("/"+requestPath), "/")
+	if relative == "" {
+		return "."
+	}
+	return relative
+}
+
+func getFileSystemRequestHandler(username string, root *os.Root) sftp.Handlers {
 	baseHandler := &FileSystemRequestHandler{
-		fileDirectory: fileDirectory,
-		username:      username,
+		root:     root,
+		username: username,
 	}
 	return sftp.Handlers{
 		FileGet:  baseHandler,
@@ -77,8 +148,8 @@ func getFileSystemRequestHandler(username string, fileDirectory string) sftp.Han
 }
 
 type FileSystemRequestHandler struct {
-	fileDirectory string
-	username      string
+	root     *os.Root
+	username string
 }
 
 func (h *FileSystemRequestHandler) Fileread(r *sftp.Request) (io.ReaderAt, error) {
@@ -90,14 +161,14 @@ func (h *FileSystemRequestHandler) Fileread(r *sftp.Request) (io.ReaderAt, error
 		if !flags.Read {
 			return nil, os.ErrInvalid
 		}
-		fullPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Filepath))
+		name := toRootRelative(r.Filepath)
 		logger := slog.With(
-			slog.String("path", fullPath),
+			slog.String("path", name),
 		)
 		// The file is opened once and the handle is held for the lifetime of
 		// the request. The request server closes it through the io.Closer
 		// implementation once the client sends CLOSE.
-		file, err := os.OpenFile(fullPath, getFileFlags(flags), defaultFileReadPermission)
+		file, err := h.root.OpenFile(name, getFileFlags(flags), defaultFileReadPermission)
 		if err != nil {
 			return nil, err
 		}
@@ -121,17 +192,17 @@ func (h *FileSystemRequestHandler) Filewrite(r *sftp.Request) (io.WriterAt, erro
 		if !flags.Write {
 			return nil, os.ErrInvalid
 		}
-		fullPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Filepath))
+		name := toRootRelative(r.Filepath)
 		slog.Info(
 			"put",
-			slog.String("path", fullPath),
+			slog.String("path", name),
 		)
 		filePermission := getWritePermission(r)
 		// The file is opened once, so O_CREATE, O_TRUNC and O_EXCL are applied
 		// exactly once per transfer. Reopening it per WriteAt would re-truncate
 		// the file on every packet and destroy all but the last chunk of any
 		// upload larger than one packet.
-		file, err := os.OpenFile(fullPath, getFileFlags(flags), filePermission)
+		file, err := h.root.OpenFile(name, getFileFlags(flags), filePermission)
 		if err != nil {
 			return nil, err
 		}
@@ -153,14 +224,14 @@ func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
 	switch r.Method {
 
 	case "Setstat":
-		fullPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Filepath))
+		name := toRootRelative(r.Filepath)
 		logger := slog.With(
-			slog.String("path", fullPath),
+			slog.String("path", name),
 		)
 		logger.Info("Setstat")
-		file, err := os.Open(fullPath)
+		file, err := h.root.Open(name)
 		if err != nil {
-			return fmt.Errorf("unable to open file [%s]: %w", fullPath, err)
+			return fmt.Errorf("unable to open file [%s]: %w", name, err)
 		}
 		// The handle is only used to truncate; a close error on it carries no
 		// information about data loss, unlike the transfer handles above.
@@ -176,65 +247,65 @@ func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
 		return nil
 
 	case "Rename":
-		fullOldPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Filepath))
-		fullNewPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Target))
+		oldName := toRootRelative(r.Filepath)
+		newName := toRootRelative(r.Target)
 		logger := slog.With(
-			slog.String("old_path", fullOldPath),
-			slog.String("new_path", fullNewPath),
+			slog.String("old_path", oldName),
+			slog.String("new_path", newName),
 		)
 		logger.Info("Rename")
-		if iohelper.IsFileExist(fullNewPath) {
+		// os.Root.Rename, like os.Rename, replaces an existing target, so the
+		// no-clobber behaviour is enforced here.
+		if _, err := h.root.Lstat(newName); err == nil {
 			logger.Info("target file exists")
 			return os.ErrExist
 		}
-		err := os.Rename(fullOldPath, fullNewPath)
-		if err != nil {
+		if err := h.root.Rename(oldName, newName); err != nil {
 			return fmt.Errorf("unable to rename file: %w", err)
 		}
 		return nil
 
 	case "Rmdir":
-		fullPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Filepath))
+		name := toRootRelative(r.Filepath)
 		logger := slog.With(
-			slog.String("path", fullPath),
+			slog.String("path", name),
 		)
 		logger.Info("Rmdir")
-		if !iohelper.IsDirectoryExist(fullPath) {
+		info, err := h.root.Stat(name)
+		if err != nil || !info.IsDir() {
 			return os.ErrNotExist
 		}
-		err := os.RemoveAll(fullPath)
-		if err != nil {
+		if err := h.root.RemoveAll(name); err != nil {
 			return fmt.Errorf("unable to remove directory: %w", err)
 		}
 		return nil
 
 	case "Mkdir":
-		fullPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Filepath))
+		name := toRootRelative(r.Filepath)
 		logger := slog.With(
-			slog.String("path", fullPath),
+			slog.String("path", name),
 		)
 		logger.Info("Mkdir")
-		if iohelper.IsDirectoryExist(fullPath) {
+		if info, err := h.root.Stat(name); err == nil && info.IsDir() {
 			return os.ErrExist
 		}
 		directoryPermission := getWritePermission(r)
-		err := os.Mkdir(fullPath, directoryPermission)
-		if err != nil {
+		if err := h.root.Mkdir(name, directoryPermission); err != nil {
 			return fmt.Errorf("unable to create directory: %w", err)
 		}
 		return nil
 
 	case "Remove":
-		fullPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Filepath))
+		name := toRootRelative(r.Filepath)
 		logger := slog.With(
-			slog.String("path", fullPath),
+			slog.String("path", name),
 		)
 		logger.Info("Remove")
-		if !iohelper.IsFileExist(fullPath) {
+		// Lstat, so that a dangling symlink is still removable.
+		if _, err := h.root.Lstat(name); err != nil {
 			return os.ErrNotExist
 		}
-		err := os.Remove(fullPath)
-		if err != nil {
+		if err := h.root.Remove(name); err != nil {
 			return fmt.Errorf("unable to remove file: %w", err)
 		}
 		return nil
@@ -260,15 +331,21 @@ func (h *FileSystemRequestHandler) Filelist(r *sftp.Request) (sftp.ListerAt, err
 	switch r.Method {
 
 	case "List":
-		fullPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Filepath))
+		name := toRootRelative(r.Filepath)
 		logger := slog.With(
-			slog.String("path", fullPath),
+			slog.String("path", name),
 		)
 		logger.Info("List")
-		if !iohelper.IsDirectoryExist(fullPath) {
+		info, err := h.root.Stat(name)
+		if err != nil || !info.IsDir() {
 			return nil, syscall.ENOTDIR
 		}
-		directoryEntries, err := os.ReadDir(fullPath)
+		directory, err := h.root.Open(name)
+		if err != nil {
+			return nil, fmt.Errorf("unable to open directory: %w", err)
+		}
+		defer func() { _ = directory.Close() }()
+		directoryEntries, err := directory.ReadDir(-1)
 		if err != nil {
 			return nil, fmt.Errorf("unable to read directory: %w", err)
 		}
@@ -283,12 +360,12 @@ func (h *FileSystemRequestHandler) Filelist(r *sftp.Request) (sftp.ListerAt, err
 		return FileSystemLister(files), nil
 
 	case "Stat":
-		fullPath := filepath.Clean(filepath.Join(h.fileDirectory, r.Filepath))
+		name := toRootRelative(r.Filepath)
 		slog.Info(
 			"stat",
-			slog.String("path", fullPath),
+			slog.String("path", name),
 		)
-		fileInfo, err := os.Stat(fullPath)
+		fileInfo, err := h.root.Stat(name)
 		if err != nil {
 			return nil, err
 		}
@@ -427,7 +504,7 @@ func dumpRequest(h *FileSystemRequestHandler, r *sftp.Request) {
 		),
 		slog.Group(
 			"handler",
-			slog.String("directory", h.fileDirectory),
+			slog.String("directory", h.root.Name()),
 			slog.String("username", h.username),
 		),
 	)
