@@ -223,7 +223,7 @@ func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
 			slog.String("path", fullPath),
 		)
 		logger.Info("Remove")
-		if iohelper.IsFileExist(fullPath) {
+		if !iohelper.IsFileExist(fullPath) {
 			return os.ErrNotExist
 		}
 		err := os.Remove(fullPath)
@@ -258,7 +258,7 @@ func (h *FileSystemRequestHandler) Filelist(r *sftp.Request) (sftp.ListerAt, err
 			slog.String("path", fullPath),
 		)
 		logger.Info("List")
-		if iohelper.IsDirectoryExist(fullPath) {
+		if !iohelper.IsDirectoryExist(fullPath) {
 			return nil, syscall.ENOTDIR
 		}
 		directoryEntries, err := os.ReadDir(fullPath)
