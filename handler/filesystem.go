@@ -3,7 +3,6 @@ package handler
 import (
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -95,12 +94,15 @@ func (h *FileSystemRequestHandler) Fileread(r *sftp.Request) (io.ReaderAt, error
 		logger := slog.With(
 			slog.String("path", fullPath),
 		)
-		reader := &FileSystemReader{
-			path:  fullPath,
-			flags: flags,
+		// The file is opened once and the handle is held for the lifetime of
+		// the request. The request server closes it through the io.Closer
+		// implementation once the client sends CLOSE.
+		file, err := os.OpenFile(fullPath, getFileFlags(flags), defaultFileReadPermission)
+		if err != nil {
+			return nil, err
 		}
 		logger.Info("get")
-		return reader, nil
+		return &FileSystemReader{file: file}, nil
 	default:
 		slog.Warn(
 			"unsupported method",
@@ -125,12 +127,15 @@ func (h *FileSystemRequestHandler) Filewrite(r *sftp.Request) (io.WriterAt, erro
 			slog.String("path", fullPath),
 		)
 		filePermission := getWritePermission(r)
-		writer := &FileSystemWriter{
-			path:           fullPath,
-			flags:          flags,
-			filePermission: filePermission,
+		// The file is opened once, so O_CREATE, O_TRUNC and O_EXCL are applied
+		// exactly once per transfer. Reopening it per WriteAt would re-truncate
+		// the file on every packet and destroy all but the last chunk of any
+		// upload larger than one packet.
+		file, err := os.OpenFile(fullPath, getFileFlags(flags), filePermission)
+		if err != nil {
+			return nil, err
 		}
-		return writer, nil
+		return &FileSystemWriter{file: file}, nil
 	case "Open":
 		slog.Warn(
 			"unsupported method",
@@ -157,7 +162,9 @@ func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
 		if err != nil {
 			return fmt.Errorf("unable to open file [%s]: %w", fullPath, err)
 		}
-		defer file.Close()
+		// The handle is only used to truncate; a close error on it carries no
+		// information about data loss, unlike the transfer handles above.
+		defer func() { _ = file.Close() }()
 		if r.AttrFlags().Size {
 			fileSize := getFileSize(r)
 			logger.Info(
@@ -301,9 +308,10 @@ func (h *FileSystemRequestHandler) Filelist(r *sftp.Request) (sftp.ListerAt, err
 	}
 }
 
+// FileSystemReader reads from a file handle that stays open for the lifetime
+// of an SFTP read request.
 type FileSystemReader struct {
-	path  string
-	flags sftp.FileOpenFlags
+	file *os.File
 }
 
 func (r *FileSystemReader) ReadAt(bytes []byte, offset int64) (n int, err error) {
@@ -311,35 +319,34 @@ func (r *FileSystemReader) ReadAt(bytes []byte, offset int64) (n int, err error)
 		return 0, fmt.Errorf("offset cannot be negative")
 	}
 
-	fileFlags := getFileFlags(r.flags)
-	file, err := os.OpenFile(r.path, fileFlags, defaultFileReadPermission)
-	if err != nil {
-		return 0, fmt.Errorf("unable to open file: %w", err)
-	}
-	defer file.Close()
-
-	return file.ReadAt(bytes, offset)
+	return r.file.ReadAt(bytes, offset)
 }
 
+// Close releases the underlying file handle. The request server calls this
+// through an io.Closer type assertion when the client closes the handle.
+func (r *FileSystemReader) Close() error {
+	return r.file.Close()
+}
+
+// FileSystemWriter writes to a file handle that stays open for the lifetime of
+// an SFTP write request.
 type FileSystemWriter struct {
-	path           string
-	flags          sftp.FileOpenFlags
-	filePermission fs.FileMode
+	file *os.File
 }
 
 func (w *FileSystemWriter) WriteAt(bytes []byte, offset int64) (n int, err error) {
 	if offset < 0 {
-		return 0, fmt.Errorf("offset cannot be agetive")
+		return 0, fmt.Errorf("offset cannot be negative")
 	}
 
-	fileFlags := getFileFlags(w.flags)
-	file, err := os.OpenFile(w.path, fileFlags, w.filePermission)
-	if err != nil {
-		return 0, fmt.Errorf("unable to open file: %w", err)
-	}
-	defer file.Close()
+	return w.file.WriteAt(bytes, offset)
+}
 
-	return file.WriteAt(bytes, offset)
+// Close releases the underlying file handle. The request server calls this
+// through an io.Closer type assertion and reports any error to the client as
+// the result of the CLOSE request, so write-back failures are not lost.
+func (w *FileSystemWriter) Close() error {
+	return w.file.Close()
 }
 
 type FileSystemLister []os.FileInfo
