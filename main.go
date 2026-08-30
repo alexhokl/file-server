@@ -84,7 +84,7 @@ func main() {
 	}
 	slog.Info("database migration completed")
 
-	config, err := getConfiguration(dbConn)
+	config, err := getConfiguration()
 	if err != nil {
 		slog.Error(
 			"unable to get configuration",
