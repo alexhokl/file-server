@@ -53,7 +53,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	dbConn, err := database.GetDatabaseConnection(dialector)
+	dbConn, err := gorm.Open(dialector, &gorm.Config{TranslateError: true})
 	if err != nil {
 		slog.Error(
 			"unable to connect to database",

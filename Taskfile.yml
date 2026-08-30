@@ -15,6 +15,16 @@ tasks:
     cmds:
       - go test -v ./...
 
+  test-api:
+    desc: Run API tests against the test database (requires the db container)
+    silent: true
+    deps: [up-test-db]
+    env:
+      FILESERVER_TEST_DATABASE_CONNECTION_STRING:
+        sh: sed 's/dbname=file_server/dbname=file_server_test/' keys/database_connection_string
+    cmds:
+      - go test -v ./api/
+
   coverage:
     desc: Unit test with coverage
     cmd: go test --cover ./...
@@ -84,6 +94,14 @@ tasks:
       - test -f docker-compose.yml
       - sh: docker version
     cmd: docker compose up db -d
+
+  up-test-db:
+    desc: Spin up the database container and ensure the test database exists
+    silent: true
+    deps: [up-db]
+    cmds:
+      - |
+        psql "$(cat keys/database_connection_string)" -tAc "SELECT 1 FROM pg_database WHERE datname='file_server_test'" | grep -q 1 || psql "$(cat keys/database_connection_string)" -c "CREATE DATABASE file_server_test"
 
   up:
     desc: Spin up all Docker containers

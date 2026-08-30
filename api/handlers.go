@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -62,7 +63,7 @@ func CreateUser(c *gin.Context) {
 	}
 
 	if err := dbConn.Create(&user).Error; err != nil {
-		if err == gorm.ErrDuplicatedKey {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			c.Status(http.StatusConflict)
 			return
 		}
@@ -105,18 +106,23 @@ func DeleteUser(c *gin.Context) {
 
 	dbConn := getDatabaseConnectionFromContext(c)
 
-	if err := dbConn.Where("username = ?", username).Delete(&db.User{}).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.Status(http.StatusNotFound)
+	result := dbConn.Where("username = ?", username).Delete(&db.User{})
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrForeignKeyViolated) {
+			c.Status(http.StatusConflict)
 			return
 		}
 
 		slog.Error(
 			"unable to delete user",
-			slog.String("error", err.Error()),
+			slog.String("error", result.Error.Error()),
 			slog.String("username", username),
 		)
 		c.Status(http.StatusInternalServerError)
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.Status(http.StatusNotFound)
 		return
 	}
 
@@ -214,7 +220,7 @@ func CreateUserCredential(c *gin.Context) {
 	dbConn := getDatabaseConnectionFromContext(c)
 
 	if err := dbConn.Where("username = ?", username).First(&db.User{}).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.Status(http.StatusNotFound)
 			return
 		}
@@ -234,7 +240,7 @@ func CreateUserCredential(c *gin.Context) {
 	}
 
 	if err := dbConn.Create(&credential).Error; err != nil {
-		if err == gorm.ErrDuplicatedKey {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			c.Status(http.StatusConflict)
 			return
 		}
@@ -282,18 +288,20 @@ func DeleteUserCredential(c *gin.Context) {
 
 	dbConn := getDatabaseConnectionFromContext(c)
 
-	if err := dbConn.Where("id = ?", credentialID).Delete(&db.UserCredential{}).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.Status(http.StatusNotFound)
-			return
-		}
-
+	result := dbConn.Where("id = ?", credentialID).Delete(&db.UserCredential{})
+	if result.Error != nil {
 		slog.Error(
 			"unable to delete user credential",
-			slog.String("error", err.Error()),
+			slog.String("error", result.Error.Error()),
 			slog.String("credential_id", credentialID),
 		)
 		c.Status(http.StatusInternalServerError)
 		return
 	}
+	if result.RowsAffected == 0 {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }

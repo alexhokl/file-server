@@ -11,5 +11,5 @@ type UserCredential struct {
 	CreatedAt time.Time `gorm:"autoCreateTime"`
 	Username  string    `gorm:"uniqueIndex:idx_uniq_credential_name,priority:1;not null"`
 	PublicKey string    `gorm:"uniqueIndex:idx_uniq_credential_name,priority:2;not null"`
-	User      User      `gorm:"foreignKey:Username"`
+	User      User      `gorm:"BELONGSTO;foreignKey:Username;references:Username;constraint:OnDelete:RESTRICT"`
 }
