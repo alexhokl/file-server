@@ -22,12 +22,7 @@ import (
 //	@Success		200	{array}	string	"list of user names"
 //	@Router			/users [get]
 func ListUsers(c *gin.Context) {
-	dbConn, ok := getDatabaseConnectionFromContext(c)
-	if !ok {
-		slog.Error("unable to retrieve database connection")
-		c.Status(http.StatusInternalServerError)
-		return
-	}
+	dbConn := getDatabaseConnectionFromContext(c)
 
 	var users []db.User
 	dbConn.Find(&users)
@@ -60,12 +55,7 @@ func CreateUser(c *gin.Context) {
 		return
 	}
 
-	dbConn, ok := getDatabaseConnectionFromContext(c)
-	if !ok {
-		slog.Error("unable to retrieve database connection")
-		c.Status(http.StatusInternalServerError)
-		return
-	}
+	dbConn := getDatabaseConnectionFromContext(c)
 
 	user := db.User{
 		Username: req.Username,
@@ -113,12 +103,7 @@ func DeleteUser(c *gin.Context) {
 		return
 	}
 
-	dbConn, ok := getDatabaseConnectionFromContext(c)
-	if !ok {
-		slog.Error("unable to retrieve database connection")
-		c.Status(http.StatusInternalServerError)
-		return
-	}
+	dbConn := getDatabaseConnectionFromContext(c)
 
 	if err := dbConn.Where("username = ?", username).Delete(&db.User{}).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -158,12 +143,7 @@ func ListUserCredentials(c *gin.Context) {
 		return
 	}
 
-	dbConn, ok := getDatabaseConnectionFromContext(c)
-	if !ok {
-		slog.Error("unable to retrieve database connection")
-		c.Status(http.StatusInternalServerError)
-		return
-	}
+	dbConn := getDatabaseConnectionFromContext(c)
 
 	var credentials []db.UserCredential
 	dbConn.Where("username = ?", username).Find(&credentials)
@@ -231,12 +211,7 @@ func CreateUserCredential(c *gin.Context) {
 		return
 	}
 
-	dbConn, ok := getDatabaseConnectionFromContext(c)
-	if !ok {
-		slog.Error("unable to retrieve database connection")
-		c.Status(http.StatusInternalServerError)
-		return
-	}
+	dbConn := getDatabaseConnectionFromContext(c)
 
 	if err := dbConn.Where("username = ?", username).First(&db.User{}).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -305,12 +280,7 @@ func DeleteUserCredential(c *gin.Context) {
 		return
 	}
 
-	dbConn, ok := getDatabaseConnectionFromContext(c)
-	if !ok {
-		slog.Error("unable to retrieve database connection")
-		c.Status(http.StatusInternalServerError)
-		return
-	}
+	dbConn := getDatabaseConnectionFromContext(c)
 
 	if err := dbConn.Where("id = ?", credentialID).Delete(&db.UserCredential{}).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {

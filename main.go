@@ -24,6 +24,9 @@ import (
 
 const SHUTDOWN_TIMEOUT_IN_SECONDS = 10
 const HTTP_SERVER_READ_HEADER_TIMEOUT_IN_SECONDS = 5
+const databaseMaxOpenConnections = 20
+const databaseMaxIdleConnections = 20
+const databaseConnectionMaxIdleTime = 30 * time.Minute
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -60,6 +63,17 @@ func main() {
 	}
 
 	slog.Info("database connection established")
+	sqlDB, err := dbConn.DB()
+	if err != nil {
+		slog.Error(
+			"unable to get database connection pool",
+			slog.String("error", err.Error()),
+		)
+		os.Exit(1)
+	}
+	sqlDB.SetMaxOpenConns(databaseMaxOpenConnections)
+	sqlDB.SetMaxIdleConns(databaseMaxIdleConnections)
+	sqlDB.SetConnMaxIdleTime(databaseConnectionMaxIdleTime)
 	err = db.Migrate(dbConn)
 	if err != nil {
 		slog.Error(
@@ -138,14 +152,7 @@ func main() {
 		}
 	}()
 
-	apiRouter, err := api.GetRouter(dialector)
-	if err != nil {
-		slog.Error(
-			"unable to get API router",
-			slog.String("error", err.Error()),
-		)
-		os.Exit(1)
-	}
+	apiRouter := api.GetRouter(dbConn)
 
 	httpServer := &http.Server{
 		Addr:              fmt.Sprintf(":%d", config.APIServerPort),

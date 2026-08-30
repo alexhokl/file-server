@@ -8,7 +8,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
-func GetRouter(dialector gorm.Dialector) (*gin.Engine, error) {
+func GetRouter(dbConn *gorm.DB) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
@@ -20,7 +20,7 @@ func GetRouter(dialector gorm.Dialector) (*gin.Engine, error) {
 	r.GET("/docs/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
 
 	// User APIs
-	users := r.Group("/users", requiredAdminAccess(), withDatabaseConnection(dialector))
+	users := r.Group("/users", requiredAdminAccess(), withDatabaseConnection(dbConn))
 	users.GET("", ListUsers)
 	users.POST("", CreateUser)
 	users.DELETE("/:username", DeleteUser)
@@ -31,5 +31,5 @@ func GetRouter(dialector gorm.Dialector) (*gin.Engine, error) {
 	userCredentials.POST("", CreateUserCredential)
 	userCredentials.DELETE("/:credential_id", DeleteUserCredential)
 
-	return r, nil
+	return r
 }
