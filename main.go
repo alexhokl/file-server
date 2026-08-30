@@ -171,15 +171,15 @@ func main() {
 	stop()
 	slog.Info("shutting down gracefully, press Ctrl+C again to force")
 
-	ctx, cancel := context.WithTimeout(ctx, SHUTDOWN_TIMEOUT_IN_SECONDS*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), SHUTDOWN_TIMEOUT_IN_SECONDS*time.Second)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error(
 			"server forced to shutdown",
 			slog.String("error", err.Error()),
 		)
 	}
-	if err := httpServer.Shutdown(ctx); err != nil {
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		slog.Error(
 			"API server forced to shutdown",
 			slog.String("error", err.Error()),
