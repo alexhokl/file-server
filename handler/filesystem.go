@@ -268,14 +268,33 @@ func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
 			slog.String("new_path", newName),
 		)
 		logger.Info("Rename")
-		// os.Root.Rename, like os.Rename, replaces an existing target, so the
-		// no-clobber behaviour is enforced here.
-		if _, err := h.root.Lstat(newName); err == nil {
-			logger.Info("target file exists")
-			return os.ErrExist
+		oldInfo, err := h.root.Lstat(oldName)
+		if err != nil {
+			return os.ErrNotExist
 		}
-		if err := h.root.Rename(oldName, newName); err != nil {
-			return fmt.Errorf("unable to rename file: %w", err)
+		// renameat(2) silently replaces an existing target, and os.Root offers
+		// no no-replace variant. linkat fails with EEXIST when the target
+		// exists, so for regular files link-then-unlink is an atomic
+		// no-clobber rename. Directories cannot be hardlinked, so they keep
+		// the checked rename; the race window there only affects a directory
+		// rename racing a concurrent create of the same target name.
+		if oldInfo.IsDir() {
+			if _, err := h.root.Lstat(newName); err == nil {
+				logger.Info("target file exists")
+				return os.ErrExist
+			}
+			if err := h.root.Rename(oldName, newName); err != nil {
+				return fmt.Errorf("unable to rename directory: %w", err)
+			}
+			return nil
+		}
+		if err := h.root.Link(oldName, newName); err != nil {
+			return err
+		}
+		if err := h.root.Remove(oldName); err != nil {
+			// The target is in place; the stale source is left behind and
+			// reported. A retry removes it.
+			return fmt.Errorf("unable to remove old name after rename: %w", err)
 		}
 		return nil
 
@@ -306,7 +325,13 @@ func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
 		if info, err := h.root.Stat(name); err == nil && info.IsDir() {
 			return os.ErrExist
 		}
-		directoryPermission := getWritePermission(r)
+		// Directories need traversable permissions by default; the file
+		// default of 0600 would make them unreachable.
+		directoryPermission := fs.FileMode(defaultDirectoryPermission)
+		if r.AttrFlags().Permissions {
+			// Perm() strips the SFTP type bits, which do not apply to mkdir.
+			directoryPermission = r.Attributes().FileMode().Perm()
+		}
 		if err := h.root.Mkdir(name, directoryPermission); err != nil {
 			return fmt.Errorf("unable to create directory: %w", err)
 		}

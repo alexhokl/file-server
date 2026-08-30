@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -402,6 +403,41 @@ func TestFilecmd_Mkdir(t *testing.T) {
 	assert.ErrorIs(t, h.Filecmd(newRequest("Mkdir", "/newdir", 0)), os.ErrExist)
 }
 
+// TestFilecmd_MkdirDefaultPermissions guards the default directory mode: a
+// mkdir without attributes must create a traversable directory (0700), not a
+// directory with the 0600 file default that nothing can enter.
+func TestFilecmd_MkdirDefaultPermissions(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	require.NoError(t, h.Filecmd(newRequest("Mkdir", "/plain", 0)))
+
+	info, err := os.Stat(filepath.Join(dir, "plain"))
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o700), info.Mode().Perm())
+}
+
+// TestFilecmd_MkdirRequestedPermissions checks that a mkdir carrying a
+// permissions attribute honours the requested bits.
+func TestFilecmd_MkdirRequestedPermissions(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	// The flags word lives in Request.Flags; Attrs carries only the values
+	// (here a single uint32 mode).
+	const sshFileXferAttrPermissions = 0x00000004
+	attrs := make([]byte, 4)
+	binary.BigEndian.PutUint32(attrs, 0o755)
+
+	r := newRequest("Mkdir", "/requested", sshFileXferAttrPermissions)
+	r.Attrs = attrs
+	require.True(t, r.AttrFlags().Permissions)
+
+	require.NoError(t, h.Filecmd(r))
+
+	info, err := os.Stat(filepath.Join(dir, "requested"))
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o755), info.Mode().Perm())
+}
+
 // TestFilecmd_Remove guards the inverted existence check that previously made
 // Remove only ever attempt to delete files that did not exist.
 func TestFilecmd_Remove(t *testing.T) {
@@ -476,6 +512,66 @@ func TestFilecmd_RenameOntoExistingTarget(t *testing.T) {
 	r := newRequest("Rename", "/a.txt", 0)
 	r.Target = "/b.txt"
 	assert.ErrorIs(t, h.Filecmd(r), os.ErrExist, "rename must not clobber an existing file")
+
+	// The target's content survived the attempt.
+	got, err := os.ReadFile(filepath.Join(dir, "b.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("b"), got)
+}
+
+// TestFilecmd_RenameMissingSource checks that a missing source reports
+// no-such-file even when the target exists, rather than a confusing
+// "file exists".
+func TestFilecmd_RenameMissingSource(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "target.txt"), []byte("t"), 0o600))
+
+	r := newRequest("Rename", "/absent.txt", 0)
+	r.Target = "/target.txt"
+	assert.ErrorIs(t, h.Filecmd(r), os.ErrNotExist)
+}
+
+// TestFilecmd_RenameOntoSymlinkTarget pins that a symlink occupying the target
+// name blocks the rename: linkat does not follow the final component, so the
+// link itself is the name collision, never whatever it points at.
+func TestFilecmd_RenameOntoSymlinkTarget(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "victim.txt"), []byte("victim"), 0o600))
+	require.NoError(t, os.Symlink("victim.txt", filepath.Join(dir, "target.txt")))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "source.txt"), []byte("source"), 0o600))
+
+	r := newRequest("Rename", "/source.txt", 0)
+	r.Target = "/target.txt"
+	assert.ErrorIs(t, h.Filecmd(r), os.ErrExist, "a symlink occupying the target must block the rename")
+
+	// The victim behind the symlink is untouched.
+	got, err := os.ReadFile(filepath.Join(dir, "victim.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("victim"), got)
+}
+
+func TestFilecmd_RenameDirectory(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "olddir"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "olddir", "inner.txt"), []byte("inner"), 0o600))
+
+	r := newRequest("Rename", "/olddir", 0)
+	r.Target = "/newdir"
+	require.NoError(t, h.Filecmd(r))
+
+	assert.NoDirExists(t, filepath.Join(dir, "olddir"))
+	got, err := os.ReadFile(filepath.Join(dir, "newdir", "inner.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("inner"), got)
+
+	// The no-clobber check applies to directories too.
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "otherdir"), 0o700))
+	r = newRequest("Rename", "/newdir", 0)
+	r.Target = "/otherdir"
+	assert.ErrorIs(t, h.Filecmd(r), os.ErrExist, "directory rename must not clobber an existing target")
 }
 
 func TestFilecmd_UnsupportedMethods(t *testing.T) {

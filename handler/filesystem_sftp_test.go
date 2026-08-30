@@ -3,10 +3,12 @@ package handler
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/pkg/sftp"
@@ -232,6 +234,43 @@ func TestSFTPListAndRemove(t *testing.T) {
 	assert.Error(t, client.Remove("/absent.txt"))
 }
 
+// TestSFTPRenameAtomicity hammers Rename from concurrent sessions: renaming
+// onto a fresh target must succeed exactly once, and the winner's content must
+// be the only thing any client ever sees at the target.
+func TestSFTPRenameAtomicity(t *testing.T) {
+	const sessions = 8
+
+	client, dir := newSFTPTestPair(t)
+
+	// Every session renames its own source onto the same fresh target; the
+	// linkat-based rename admits exactly one of them.
+	var wg sync.WaitGroup
+	errs := make([]error, sessions)
+	for i := 0; i < sessions; i++ {
+		source := fmt.Sprintf("/src-%d.bin", i)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("src-%d.bin", i)), []byte(fmt.Sprintf("payload-%d", i)), 0o600))
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = client.Rename(source, "/target.bin")
+		}(i)
+	}
+	wg.Wait()
+
+	var successes int
+	for _, err := range errs {
+		if err == nil {
+			successes++
+		}
+	}
+	assert.Equal(t, 1, successes, "exactly one rename must win the target")
+
+	// The target holds the winner's payload, and its source is gone.
+	got, err := os.ReadFile(filepath.Join(dir, "target.bin"))
+	require.NoError(t, err)
+	assert.Regexp(t, `^payload-\d+$`, string(got))
+}
+
 // TestSFTPListErrors checks the errors a client sees for a bad List: a
 // missing path must report no-such-file rather than a generic failure, and a
 // regular file must report not-a-directory.
@@ -270,12 +309,11 @@ func TestSFTPStatAndMkdir(t *testing.T) {
 // deletion: RMDIR over the wire must refuse a populated directory, matching
 // the semantics of every other SFTP server, instead of deleting the tree.
 func TestSFTPRmdirNonEmptyFails(t *testing.T) {
-	client, dir := newSFTPTestPair(t)
+	client, _ := newSFTPTestPair(t)
 
-	// The directory is created on the host side: over the wire, Mkdir without
-	// a permissions attribute creates it 0600, which is not traversable and
-	// would make the file upload below fail with EACCES.
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "occupied"), 0o700))
+	// Mkdir over the wire must create a traversable directory (0700), so the
+	// upload below can land inside it.
+	require.NoError(t, client.Mkdir("/occupied"))
 	f, err := client.Create("/occupied/keep.txt")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
