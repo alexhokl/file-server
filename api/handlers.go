@@ -26,14 +26,21 @@ func ListUsers(c *gin.Context) {
 	dbConn := getDatabaseConnectionFromContext(c)
 
 	var users []db.User
-	dbConn.Find(&users)
+	if err := dbConn.Find(&users).Error; err != nil {
+		slog.Error(
+			"unable to list users",
+			slog.String("error", err.Error()),
+		)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 
 	list := make([]string, len(users))
 	for i, user := range users {
 		list[i] = user.Username
 	}
 
-	c.JSON(http.StatusOK, users)
+	c.JSON(http.StatusOK, list)
 }
 
 // CreateUser godoc
@@ -151,8 +158,31 @@ func ListUserCredentials(c *gin.Context) {
 
 	dbConn := getDatabaseConnectionFromContext(c)
 
+	if err := dbConn.Where("username = ?", username).First(&db.User{}).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		slog.Error(
+			"unable to retrieve user",
+			slog.String("error", err.Error()),
+			slog.String("username", username),
+		)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+
 	var credentials []db.UserCredential
-	dbConn.Where("username = ?", username).Find(&credentials)
+	if err := dbConn.Where("username = ?", username).Find(&credentials).Error; err != nil {
+		slog.Error(
+			"unable to retrieve user credentials",
+			slog.String("error", err.Error()),
+			slog.String("username", username),
+		)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 
 	keys := make([]credentialInfo, len(credentials))
 	for i, credential := range credentials {

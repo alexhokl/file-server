@@ -221,19 +221,14 @@ func TestListUsers(t *testing.T) {
 	response := serve(t, http.MethodGet, "/users", "")
 	require.Equal(t, http.StatusOK, response.Code)
 
-	var users []struct {
-		Username string `json:"username"`
-	}
+	var users []string
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &users))
-	assert.Contains(t, usernames(users), username)
+	assert.Contains(t, users, username)
 }
 
-func usernames(users []struct {
-	Username string `json:"username"`
-}) []string {
-	out := make([]string, len(users))
-	for i, u := range users {
-		out[i] = u.Username
-	}
-	return out
+func TestListUserCredentials_MissingUserReturns404(t *testing.T) {
+	username := uniqueUsername("ghost")
+
+	response := serve(t, http.MethodGet, "/users/"+username+"/credentials", "")
+	assert.Equal(t, http.StatusNotFound, response.Code, "listing credentials of a missing user must be 404, not 200 []")
 }
