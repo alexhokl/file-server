@@ -354,7 +354,12 @@ func (h *FileSystemRequestHandler) Filelist(r *sftp.Request) (sftp.ListerAt, err
 		)
 		logger.Info("List")
 		info, err := h.root.Stat(name)
-		if err != nil || !info.IsDir() {
+		if err != nil {
+			// The error carries the real cause (no such file, permission
+			// denied, ...) so the client receives the matching SFTP status.
+			return nil, err
+		}
+		if !info.IsDir() {
 			return nil, syscall.ENOTDIR
 		}
 		directory, err := h.root.Open(name)

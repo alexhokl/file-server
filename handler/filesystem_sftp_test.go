@@ -232,6 +232,25 @@ func TestSFTPListAndRemove(t *testing.T) {
 	assert.Error(t, client.Remove("/absent.txt"))
 }
 
+// TestSFTPListErrors checks the errors a client sees for a bad List: a
+// missing path must report no-such-file rather than a generic failure, and a
+// regular file must report not-a-directory.
+func TestSFTPListErrors(t *testing.T) {
+	client, dir := newSFTPTestPair(t)
+
+	_, err := client.ReadDir("/absent")
+	require.Error(t, err)
+	// The client library maps the sshFxNoSuchFile status to this message.
+	assert.Contains(t, err.Error(), "file does not exist",
+		"a missing directory must surface as no-such-file")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plain.txt"), []byte("f"), 0o600))
+	_, err = client.ReadDir("/plain.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a directory",
+		"a regular file must surface as not-a-directory")
+}
+
 func TestSFTPStatAndMkdir(t *testing.T) {
 	client, dir := newSFTPTestPair(t)
 

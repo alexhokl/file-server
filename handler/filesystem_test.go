@@ -361,6 +361,19 @@ func TestFilelist_ListOnMissingDirectory(t *testing.T) {
 	h, _ := newTestHandler(t)
 
 	_, err := h.Filelist(newRequest("List", "/absent", 0))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrNotExist, "a missing directory must surface as no-such-file, not ENOTDIR")
+}
+
+// TestFilelist_ListOnFileReturnsENOTDIR guards the exists-but-not-a-directory
+// case, which keeps the POSIX errno.
+func TestFilelist_ListOnFileReturnsENOTDIR(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "plain.txt"), []byte("f"), 0o600))
+
+	_, err := h.Filelist(newRequest("List", "/plain.txt", 0))
+	require.Error(t, err)
 	assert.ErrorIs(t, err, syscall.ENOTDIR)
 }
 
