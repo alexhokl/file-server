@@ -3,7 +3,7 @@ package db
 import "time"
 
 type User struct {
-	Username string `gorm:"primary_key;unique;not null"`
+	Username string `gorm:"primary_key;not null"`
 }
 
 type UserCredential struct {
