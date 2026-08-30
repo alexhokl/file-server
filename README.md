@@ -34,6 +34,8 @@ ssh_port: 8822
 api_port: 8880
 path_users_directory: ./data/files
 path_database_connection_string: ./keys/database_connection_string
+ssh_idle_timeout: 5m
+ssh_max_connections: 100
 administrative_users:
   - alex
 ```
@@ -50,6 +52,8 @@ All environment variables are prefixed with `FILESERVER_`.
 | `FILESERVER_API_PORT` | Port of the HTTP API server |
 | `FILESERVER_PATH_USERS_DIRECTORY` | Directory path for data storage, must exist |
 | `FILESERVER_ADMINISTRATIVE_USERS` | Space-separated list of administrative usernames, must not be empty |
+| `FILESERVER_SSH_IDLE_TIMEOUT` | Idle timeout for SSH connections in Go duration format (e.g. `90s`, `5m`); defaults to `5m`; malformed values fail startup |
+| `FILESERVER_SSH_MAX_CONNECTIONS` | Maximum concurrently open SSH connections; defaults to `100`; `0` disables the cap |
 
 `task run` sets all of the above with development defaults before starting the server.
 

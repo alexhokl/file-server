@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -138,11 +139,26 @@ func main() {
 		},
 		PublicKeyHandler: getPublicKeyHandler(dbConn),
 		HostSigners:      []ssh.Signer{hostkey},
+		// Cut connections that go silent, while active transfers keep
+		// resetting the deadline. MaxTimeout is deliberately unset so long
+		// transfers and persistent mounts are not arbitrarily killed.
+		IdleTimeout: config.SSHIdleTimeout,
 	}
+
+	sshListener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		slog.Error(
+			"unable to listen on SSH port",
+			slog.String("error", err.Error()),
+			slog.String("addr", server.Addr),
+		)
+		os.Exit(1)
+	}
+	cappedListener := newLimitedListener(sshListener, config.SSHMaxConnections)
 
 	go func() {
 		slog.Info("starting server", slog.String("addr", server.Addr))
-		if err := server.ListenAndServe(); err != nil {
+		if err := server.Serve(cappedListener); err != nil && err != ssh.ErrServerClosed {
 			slog.Error(
 				"unable to start server",
 				slog.String("error", err.Error()),
