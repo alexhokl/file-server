@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pkg/sftp"
 	"github.com/stretchr/testify/assert"
@@ -288,6 +290,39 @@ func TestSFTPListErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not a directory",
 		"a regular file must surface as not-a-directory")
+}
+
+// TestSFTPSetstatChmodTimesTruncate is the wire-level guard against Setstat
+// silently succeeding: Chmod, Chtimes and Truncate from a real client must
+// all take effect on the host filesystem.
+func TestSFTPSetstatChmodTimesTruncate(t *testing.T) {
+	client, dir := newSFTPTestPair(t)
+
+	path := filepath.Join(dir, "attr.bin")
+	require.NoError(t, os.WriteFile(path, []byte("0123456789"), 0o600))
+
+	require.NoError(t, client.Chmod("/attr.bin", 0o644))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o644), info.Mode().Perm(), "Chmod over the wire must change the mode")
+
+	wantMtime := time.Unix(1_700_000_123, 0)
+	require.NoError(t, client.Chtimes("/attr.bin", wantMtime, wantMtime))
+	info, err = os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, wantMtime.Unix(), info.ModTime().Unix(), "Chtimes over the wire must change the mtime")
+
+	require.NoError(t, client.Truncate("/attr.bin", 4))
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("0123"), got, "Truncate over the wire must shrink the file")
+
+	// A chmod on a directory must work too, not fail with EISDIR.
+	require.NoError(t, client.Mkdir("/d"))
+	require.NoError(t, client.Chmod("/d", 0o755))
+	info, err = os.Stat(filepath.Join(dir, "d"))
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o755), info.Mode().Perm())
 }
 
 func TestSFTPStatAndMkdir(t *testing.T) {

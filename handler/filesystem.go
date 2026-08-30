@@ -19,6 +19,15 @@ const defaultFileWritePermission = 0600
 const defaultFileReadPermission = 0400
 const defaultDirectoryPermission = 0700
 
+// SFTP file attribute flags (SSH_FILEXFER_ATTR_*), set on Request.Flags for
+// Setstat requests. Unexported in pkg/sftp, so redeclared here.
+const (
+	sshFileXferAttrSize        = 0x00000001
+	sshFileXferAttrUidGid      = 0x00000002
+	sshFileXferAttrPermissions = 0x00000004
+	sshFileXferAttrAcmodtime   = 0x00000008
+)
+
 // errInvalidUsername is returned when a username cannot be used as a single
 // directory name beneath the users directory.
 var errInvalidUsername = errors.New("username is not a valid directory name")
@@ -241,22 +250,61 @@ func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
 			slog.String("path", name),
 		)
 		logger.Info("Setstat")
-		// Opened for writing: ftruncate requires a writable descriptor and
-		// fails with EINVAL on a read-only one.
-		file, err := h.root.OpenFile(name, os.O_WRONLY, 0)
-		if err != nil {
-			return fmt.Errorf("unable to open file [%s]: %w", name, err)
+		attrFlags := r.AttrFlags()
+		// Checked before anything is applied, so a rejection never leaves
+		// attributes half-set.
+		if attrFlags.UidGid {
+			return fmt.Errorf("setting file ownership is not supported")
 		}
-		// The handle is only used to truncate; a close error on it carries no
-		// information about data loss, unlike the transfer handles above.
-		defer func() { _ = file.Close() }()
-		if r.AttrFlags().Size {
+		if attrFlags.Size {
 			fileSize := getFileSize(r)
+			if fileSize < 0 {
+				return fmt.Errorf("invalid file size: %d", fileSize)
+			}
+			// Opened for writing: ftruncate requires a writable descriptor
+			// and fails with EINVAL on a read-only one. Only files are opened
+			// here, so Setstat on a directory no longer fails with EISDIR.
+			file, err := h.root.OpenFile(name, os.O_WRONLY, 0)
+			if err != nil {
+				return fmt.Errorf("unable to open file [%s]: %w", name, err)
+			}
+			// The handle is only used to truncate; a close error on it
+			// carries no information about data loss, unlike the transfer
+			// handles above.
+			truncateErr := file.Truncate(fileSize)
+			closeErr := file.Close()
+			if truncateErr != nil {
+				return fmt.Errorf("unable to truncate file [%s]: %w", name, truncateErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("unable to close file [%s]: %w", name, closeErr)
+			}
 			logger.Info(
 				"Setstat",
 				slog.Int64("size", fileSize),
 			)
-			return file.Truncate(fileSize)
+		}
+		if attrFlags.Permissions {
+			permissions := r.Attributes().FileMode().Perm()
+			if err := h.root.Chmod(name, permissions); err != nil {
+				return fmt.Errorf("unable to change permissions [%s]: %w", name, err)
+			}
+			logger.Info(
+				"Setstat",
+				slog.Uint64("permissions", uint64(permissions)),
+			)
+		}
+		if attrFlags.Acmodtime {
+			attributes := r.Attributes()
+			// The protocol carries seconds; times before the epoch arrive as
+			// pre-1970 values and are applied as such.
+			if err := h.root.Chtimes(name, attributes.AccessTime(), attributes.ModTime()); err != nil {
+				return fmt.Errorf("unable to change times [%s]: %w", name, err)
+			}
+			logger.Info(
+				"Setstat",
+				slog.Int64("mtime", attributes.ModTime().Unix()),
+			)
 		}
 		return nil
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/pkg/sftp"
 	"github.com/stretchr/testify/assert"
@@ -28,8 +29,8 @@ const (
 	pflagExcl   = 0x00000020
 )
 
-// sshFileXferAttrSize is the SSH_FILEXFER_ATTR_SIZE attribute flag.
-const sshFileXferAttrSize = 0x00000001
+// sshFileXferAttr* attribute flags are declared in filesystem.go and shared
+// by the handler and these tests.
 
 // packetSize mirrors defaultMaxTxPacket in pkg/sftp: the maximum payload the
 // request server passes to a single WriteAt call. Uploads larger than this are
@@ -423,7 +424,6 @@ func TestFilecmd_MkdirRequestedPermissions(t *testing.T) {
 
 	// The flags word lives in Request.Flags; Attrs carries only the values
 	// (here a single uint32 mode).
-	const sshFileXferAttrPermissions = 0x00000004
 	attrs := make([]byte, 4)
 	binary.BigEndian.PutUint32(attrs, 0o755)
 
@@ -713,4 +713,132 @@ func TestFilecmd_SetstatTruncate(t *testing.T) {
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("0123"), got)
+}
+
+// TestFilecmd_SetstatPermissions guards against the silent no-op: a Setstat
+// carrying a permissions attribute must actually change the mode.
+func TestFilecmd_SetstatPermissions(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	path := filepath.Join(dir, "chmod.txt")
+	require.NoError(t, os.WriteFile(path, []byte("data"), 0o600))
+
+	attrs := make([]byte, 4)
+	binary.BigEndian.PutUint32(attrs, 0o644)
+
+	r := newRequest("Setstat", "/chmod.txt", sshFileXferAttrPermissions)
+	r.Attrs = attrs
+	require.True(t, r.AttrFlags().Permissions)
+
+	require.NoError(t, h.Filecmd(r))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o644), info.Mode().Perm())
+}
+
+// TestFilecmd_SetstatTimes guards against the silent no-op for access and
+// modification times.
+func TestFilecmd_SetstatTimes(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	path := filepath.Join(dir, "times.txt")
+	require.NoError(t, os.WriteFile(path, []byte("data"), 0o600))
+
+	// ACmodtime attributes: two uint32 seconds.
+	wantAtime := time.Unix(1_700_000_000, 0)
+	wantMtime := time.Unix(1_700_000_001, 0)
+	attrs := make([]byte, 8)
+	binary.BigEndian.PutUint32(attrs[0:4], uint32(wantAtime.Unix()))
+	binary.BigEndian.PutUint32(attrs[4:8], uint32(wantMtime.Unix()))
+
+	r := newRequest("Setstat", "/times.txt", sshFileXferAttrAcmodtime)
+	r.Attrs = attrs
+	require.True(t, r.AttrFlags().Acmodtime)
+
+	require.NoError(t, h.Filecmd(r))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, wantMtime.Unix(), info.ModTime().Unix())
+}
+
+// TestFilecmd_SetstatOnDirectory guards against the unconditional open that
+// made every Setstat on a directory fail with EISDIR before any attribute
+// could be applied.
+func TestFilecmd_SetstatOnDirectory(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "d"), 0o700))
+
+	attrs := make([]byte, 4)
+	binary.BigEndian.PutUint32(attrs, 0o755)
+
+	r := newRequest("Setstat", "/d", sshFileXferAttrPermissions)
+	r.Attrs = attrs
+
+	require.NoError(t, h.Filecmd(r), "Setstat must be able to change a directory's permissions")
+
+	info, err := os.Stat(filepath.Join(dir, "d"))
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o755), info.Mode().Perm())
+}
+
+// TestFilecmd_SetstatSizeAndPermissions checks that a request carrying
+// several attributes applies all of them, not only the first.
+func TestFilecmd_SetstatSizeAndPermissions(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	path := filepath.Join(dir, "both.txt")
+	require.NoError(t, os.WriteFile(path, []byte("0123456789"), 0o600))
+
+	// Size (uint64) then permissions (uint32).
+	attrs := make([]byte, 12)
+	binary.BigEndian.PutUint64(attrs[0:8], 4)
+	binary.BigEndian.PutUint32(attrs[8:12], 0o640)
+
+	flags := uint32(sshFileXferAttrSize | sshFileXferAttrPermissions)
+	r := newRequest("Setstat", "/both.txt", flags)
+	r.Attrs = attrs
+	require.True(t, r.AttrFlags().Size)
+	require.True(t, r.AttrFlags().Permissions)
+
+	require.NoError(t, h.Filecmd(r))
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("0123"), got, "the size attribute should have truncated the file")
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0o640), info.Mode().Perm(), "the permissions attribute should have been applied")
+}
+
+// TestFilecmd_SetstatOwnershipRejected checks that a UID/GID attribute fails
+// the whole request without touching the file.
+func TestFilecmd_SetstatOwnershipRejected(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	path := filepath.Join(dir, "owned.txt")
+	require.NoError(t, os.WriteFile(path, []byte("data"), 0o600))
+
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+
+	// UidGid attributes: two uint32s.
+	attrs := make([]byte, 8)
+	binary.BigEndian.PutUint32(attrs[0:4], 1000)
+	binary.BigEndian.PutUint32(attrs[4:8], 1000)
+
+	r := newRequest("Setstat", "/owned.txt", sshFileXferAttrUidGid)
+	r.Attrs = attrs
+	require.True(t, r.AttrFlags().UidGid)
+
+	err = h.Filecmd(r)
+	require.Error(t, err, "ownership changes must be rejected")
+	assert.Contains(t, err.Error(), "ownership")
+
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, before.Mode(), after.Mode(), "the file must be unchanged")
 }
