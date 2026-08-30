@@ -277,7 +277,10 @@ func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
 		if err != nil || !info.IsDir() {
 			return os.ErrNotExist
 		}
-		if err := h.root.RemoveAll(name); err != nil {
+		// Remove only deletes empty directories, per SFTP RMDIR semantics;
+		// the kernel rejects a populated one with ENOTEMPTY. It does not
+		// follow symlinks, so os.Root containment is preserved.
+		if err := h.root.Remove(name); err != nil {
 			return fmt.Errorf("unable to remove directory: %w", err)
 		}
 		return nil

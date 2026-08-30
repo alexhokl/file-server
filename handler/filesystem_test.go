@@ -387,6 +387,28 @@ func TestFilecmd_Rmdir(t *testing.T) {
 	assert.ErrorIs(t, h.Filecmd(newRequest("Rmdir", "/gone", 0)), os.ErrNotExist)
 }
 
+// TestFilecmd_RmdirNonEmpty guards the recursive deletion: Rmdir must refuse a
+// populated directory instead of removing it with everything inside.
+func TestFilecmd_RmdirNonEmpty(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "occupied"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "occupied", "keep.txt"), []byte("data"), 0o600))
+
+	err := h.Filecmd(newRequest("Rmdir", "/occupied", 0))
+	require.Error(t, err, "rmdir on a non-empty directory must fail")
+	assert.ErrorIs(t, err, syscall.ENOTEMPTY)
+
+	// Nothing was deleted.
+	assert.DirExists(t, filepath.Join(dir, "occupied"))
+	assert.FileExists(t, filepath.Join(dir, "occupied", "keep.txt"))
+
+	// Once emptied, the same call succeeds.
+	require.NoError(t, os.Remove(filepath.Join(dir, "occupied", "keep.txt")))
+	require.NoError(t, h.Filecmd(newRequest("Rmdir", "/occupied", 0)))
+	assert.NoDirExists(t, filepath.Join(dir, "occupied"))
+}
+
 func TestFilecmd_Rename(t *testing.T) {
 	h, dir := newTestHandler(t)
 

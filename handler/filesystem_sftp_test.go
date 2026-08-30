@@ -199,6 +199,38 @@ func TestSFTPStatAndMkdir(t *testing.T) {
 	assert.True(t, created.IsDir())
 }
 
+// TestSFTPRmdirNonEmptyFails is the end-to-end guard against recursive
+// deletion: RMDIR over the wire must refuse a populated directory, matching
+// the semantics of every other SFTP server, instead of deleting the tree.
+func TestSFTPRmdirNonEmptyFails(t *testing.T) {
+	client, dir := newSFTPTestPair(t)
+
+	// The directory is created on the host side: over the wire, Mkdir without
+	// a permissions attribute creates it 0600, which is not traversable and
+	// would make the file upload below fail with EACCES.
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "occupied"), 0o700))
+	f, err := client.Create("/occupied/keep.txt")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	assert.Error(t, client.RemoveDirectory("/occupied"),
+		"rmdir over SFTP must fail on a non-empty directory")
+
+	// The directory and its contents survived.
+	info, err := client.Stat("/occupied")
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+	entries, err := client.ReadDir("/occupied")
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
+
+	// Emptied, the removal succeeds.
+	require.NoError(t, client.Remove("/occupied/keep.txt"))
+	require.NoError(t, client.RemoveDirectory("/occupied"))
+	_, err = client.Stat("/occupied")
+	assert.Error(t, err, "the directory should be gone")
+}
+
 // TestSFTPAbsolutePathIsConfined checks that an absolute path from the client
 // resolves inside the user directory rather than at the real filesystem root.
 //
