@@ -224,6 +224,36 @@ func TestFileread_MissingFileErrorsAtOpen(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
+// TestOpenFile_ReadWriteRoundTrip covers handles opened for both reading and
+// writing: both operations go through the same descriptor.
+func TestOpenFile_ReadWriteRoundTrip(t *testing.T) {
+	h, dir := newTestHandler(t)
+
+	r := newRequest("Open", "/rw.bin", pflagRead|pflagWrite|pflagCreat|pflagTrunc)
+	rw, err := h.OpenFile(r)
+	require.NoError(t, err)
+
+	want := []byte("read-write payload")
+	n, err := rw.WriteAt(want, 0)
+	require.NoError(t, err)
+	require.Equal(t, len(want), n)
+
+	got := make([]byte, len(want))
+	n, err = rw.ReadAt(got, 0)
+	require.NoError(t, err)
+	require.Equal(t, len(want), n)
+	assert.Equal(t, want, got, "reading through the same handle must return what was written")
+
+	c, ok := rw.(io.Closer)
+	require.True(t, ok, "OpenFile handle must implement io.Closer so the request server can close it")
+	require.NoError(t, c.Close())
+
+	// The write reached the file system.
+	onDisk, err := os.ReadFile(filepath.Join(dir, "rw.bin"))
+	require.NoError(t, err)
+	assert.Equal(t, want, onDisk)
+}
+
 func TestWriteAt_NegativeOffset(t *testing.T) {
 	h, _ := newTestHandler(t)
 

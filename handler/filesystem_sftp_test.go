@@ -110,6 +110,54 @@ func TestSFTPUploadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSFTPOpenReadWrite opens a file for reading and writing through the same
+// handle. Before the handler implemented OpenFileWriter, the request server
+// degraded such opens to write-only and every read failed.
+func TestSFTPOpenReadWrite(t *testing.T) {
+	client, dir := newSFTPTestPair(t)
+
+	f, err := client.OpenFile("/rw.bin", os.O_RDWR|os.O_CREATE)
+	require.NoError(t, err, "an O_RDWR open must succeed")
+
+	want := []byte("read-write over one handle")
+	n, err := f.Write(want)
+	require.NoError(t, err)
+	require.Equal(t, len(want), n)
+
+	got := make([]byte, len(want))
+	n, err = f.ReadAt(got, 0)
+	require.NoError(t, err)
+	require.Equal(t, len(want), n)
+	assert.Equal(t, want, got, "reading through the O_RDWR handle must return what was written")
+
+	require.NoError(t, f.Close())
+
+	onDisk, err := os.ReadFile(filepath.Join(dir, "rw.bin"))
+	require.NoError(t, err)
+	assert.Equal(t, want, onDisk)
+}
+
+// TestSFTPCreateThenRead exercises client.Create, which opens with
+// O_RDWR|O_CREATE|O_TRUNC, and then reads back through the same handle.
+func TestSFTPCreateThenRead(t *testing.T) {
+	client, _ := newSFTPTestPair(t)
+
+	f, err := client.Create("/cr.bin")
+	require.NoError(t, err)
+
+	want := []byte("created and read back")
+	_, err = f.Write(want)
+	require.NoError(t, err)
+
+	_, err = f.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+	got, err := io.ReadAll(f)
+	require.NoError(t, err)
+	assert.Equal(t, want, got, "reading back through the same Create handle must work")
+
+	require.NoError(t, f.Close())
+}
+
 func TestSFTPDownloadRoundTrip(t *testing.T) {
 	sizes := []struct {
 		name string

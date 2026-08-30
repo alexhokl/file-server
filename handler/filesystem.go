@@ -207,15 +207,27 @@ func (h *FileSystemRequestHandler) Filewrite(r *sftp.Request) (io.WriterAt, erro
 			return nil, err
 		}
 		return &FileSystemWriter{file: file}, nil
-	case "Open":
-		slog.Warn(
-			"unsupported method",
-			slog.String("method", r.Method),
-		)
-		return nil, fmt.Errorf("unsupported")
 	default:
 		return nil, os.ErrInvalid
 	}
+}
+
+// OpenFile serves handles opened for both reading and writing. pkg/sftp only
+// calls it when the pflags carry both Read and Write, so the resulting handle
+// is always O_RDWR. Without this method the request server would silently
+// degrade the open to write-only and fail any read on the handle.
+func (h *FileSystemRequestHandler) OpenFile(r *sftp.Request) (sftp.WriterAtReaderAt, error) {
+	dumpRequest(h, r)
+	name := toRootRelative(r.Filepath)
+	slog.Info(
+		"open",
+		slog.String("path", name),
+	)
+	file, err := h.root.OpenFile(name, getFileFlags(r.Pflags()), getWritePermission(r))
+	if err != nil {
+		return nil, err
+	}
+	return &FileSystemReadWriter{file: file}, nil
 }
 
 func (h *FileSystemRequestHandler) Filecmd(r *sftp.Request) error {
@@ -429,6 +441,36 @@ func (w *FileSystemWriter) WriteAt(bytes []byte, offset int64) (n int, err error
 // the result of the CLOSE request, so write-back failures are not lost.
 func (w *FileSystemWriter) Close() error {
 	return w.file.Close()
+}
+
+// FileSystemReadWriter reads and writes through one file handle that stays
+// open for the lifetime of an SFTP open request with read and write pflags.
+// It deliberately holds a single *os.File rather than composing a reader and
+// a writer, which would close the same descriptor twice.
+type FileSystemReadWriter struct {
+	file *os.File
+}
+
+func (rw *FileSystemReadWriter) ReadAt(bytes []byte, offset int64) (n int, err error) {
+	if offset < 0 {
+		return 0, fmt.Errorf("offset cannot be negative")
+	}
+
+	return rw.file.ReadAt(bytes, offset)
+}
+
+func (rw *FileSystemReadWriter) WriteAt(bytes []byte, offset int64) (n int, err error) {
+	if offset < 0 {
+		return 0, fmt.Errorf("offset cannot be negative")
+	}
+
+	return rw.file.WriteAt(bytes, offset)
+}
+
+// Close releases the underlying file handle. The request server calls this
+// through an io.Closer type assertion when the client closes the handle.
+func (rw *FileSystemReadWriter) Close() error {
+	return rw.file.Close()
 }
 
 type FileSystemLister []os.FileInfo
