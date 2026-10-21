@@ -8,6 +8,37 @@ Secure file server with the following characteristics.
 
 :warning: This is a work in progress and not ready for production yet :warning:
 
+## Implementation Status
+
+### Working
+
+- SSH public key authentication against keys stored in PostgreSQL; keys added
+  through the API take effect without a restart
+- SFTP access confined to each user's own directory
+- SFTP operations
+  - upload, download and opening files for both reading and writing
+  - list directories and stat files
+  - create and remove directories (non-empty directories are not removed)
+  - remove files
+  - rename files and directories without overwriting an existing target
+  - set size (truncate), permissions, and access and modification times
+- Interactive shell sessions are rejected with a message
+- SSH idle timeout and a cap on concurrent SSH connections
+- HTTP API to create, list and delete users and their public keys, with
+  Swagger documentation
+- Graceful shutdown of both the SSH and HTTP servers on `SIGINT`/`SIGTERM`
+
+### To be implemented
+
+- Authentication and authorisation of the HTTP API; `administrative_users` is
+  validated at startup but not used yet
+- SFTP operations that currently return an error
+  - symbolic and hard links (`Symlink`, `Link`, `Lstat`, `Readlink`)
+  - `posix-rename@openssh.com` and `statvfs@openssh.com` extensions
+  - changing file ownership
+- Removal of a user's directory when the user is deleted (it is currently left
+  on disk)
+
 ## Storage
 
 - Files of each user are stored in `<path_users_directory>/<username>`, which
