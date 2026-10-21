@@ -12,10 +12,10 @@ type createUserCredentialRequest struct {
 
 type createUserCredentialResponse struct {
 	// ID is the ID of the user credential created
-	ID        uint   `json:"id" example:"10"`
+	ID uint `json:"id" example:"10"`
 
 	// Username is the username of the user
-	Username  string `json:"username" example:"alice"`
+	Username string `json:"username" example:"alice"`
 
 	// PublicKey is the public key of the user
 	PublicKey string `json:"public_key" example:"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDZ cardno:000607000043"`
@@ -31,7 +31,7 @@ type createdUserResponse struct {
 
 type credentialInfo struct {
 	// ID is the ID of the user credential
-	Id        uint   `json:"id" example:"10"`
+	Id uint `json:"id" example:"10"`
 
 	// PublicKey is the public key of the user
 	PublicKey string `json:"public_key" example:"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDZ cardno:000607000043"`
