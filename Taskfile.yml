@@ -73,7 +73,7 @@ tasks:
       FILESERVER_PATH_DATABASE_CONNECTION_STRING: "./keys/database_connection_string"
       FILESERVER_ADMINISTRATIVE_USERS: alex
       GIN_MODE: release
-    cmd: go run main.go config.go
+    cmd: go run .
 
   tidy:
     desc: Tidy up Go modules
