@@ -188,10 +188,12 @@ tasks:
   swagger-open:
     desc: Open Swagger documentation in a browser
     silent: true
+    vars:
+      SITE: '{{.SITE | default "localhost:8880"}}'
     cmds:
-      - cmd: open http://{{.SITE}}/swagger/index.html
+      - cmd: open http://{{.SITE}}/docs/index.html
         platforms: [darwin, linux]
-      - cmd: explorer http://{{.SITE}}/swagger/index.html
+      - cmd: explorer http://{{.SITE}}/docs/index.html
         platforms: [windows]
 
   completion-mac:

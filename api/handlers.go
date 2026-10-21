@@ -21,6 +21,7 @@ import (
 //	@Accept			json
 //	@Produce		json
 //	@Success		200	{array}	string	"list of user names"
+//	@Failure		500	"unable to retrieve users"
 //	@Router			/users [get]
 func ListUsers(c *gin.Context) {
 	dbConn := getDatabaseConnectionFromContext(c)
@@ -102,6 +103,7 @@ func CreateUser(c *gin.Context) {
 //	@Success		204			"user deleted"
 //	@Failure		400			"empty username"
 //	@Failure		404			"user not found"
+//	@Failure		409			"user still has credentials"
 //	@Failure		500			"unable to delete user"
 //	@Router			/users/{username} [delete]
 func DeleteUser(c *gin.Context) {

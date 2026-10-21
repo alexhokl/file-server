@@ -24,7 +24,7 @@ Single test/package: `go test ./api/ -run TestName`.
 
 - `main` package is split across `main.go`, `config.go` and `limit.go`. Use `go run .`; `go run main.go` (or any subset of the files) fails.
 - `docs/` is **generated** by `swag init`. Do not hand-edit; change the swagger comments in `api/handlers.go` and regenerate.
-- Swagger UI is mounted at `/docs/*any` (`api/router.go`), not `/swagger/...`. The `swagger-open` task's URL is stale.
+- Swagger UI is mounted at `/docs/*any` (`api/router.go`), not `/swagger/...`.
 - Config is Viper via `cli.ConfigureViper("", "file-server", false, "fileserver")` → env prefix `FILESERVER_`. Viper keys in code are unprefixed (`host_key`, `ssh_port`, `api_port`, `path_users_directory`, `path_database_connection_string`, `administrative_users`, `ssh_idle_timeout`, `ssh_max_connections`). Validation is in `getConfiguration()` (`config.go`).
 - `ssh_idle_timeout` defaults to `5m`; a malformed value fails startup rather than silently disabling the timeout. `ssh_max_connections` defaults to `100`; `0` disables the cap.
 - `FILESERVER_PATH_DATABASE_CONNECTION_STRING` and `FILESERVER_HOST_KEY` are **file paths**, not values. Both live under `keys/`, which is gitignored — a fresh clone cannot run until those files exist (`task gen-key` creates the ECDSA host key via `step`).

@@ -37,6 +37,9 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "500": {
+                        "description": "unable to retrieve users"
                     }
                 }
             },
@@ -113,6 +116,9 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "user not found"
+                    },
+                    "409": {
+                        "description": "user still has credentials"
                     },
                     "500": {
                         "description": "unable to delete user"

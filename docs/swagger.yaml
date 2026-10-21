@@ -72,6 +72,8 @@ paths:
             items:
               type: string
             type: array
+        "500":
+          description: unable to retrieve users
       summary: List users
       tags:
       - users
@@ -122,6 +124,8 @@ paths:
           description: empty username
         "404":
           description: user not found
+        "409":
+          description: user still has credentials
         "500":
           description: unable to delete user
       summary: Delete user
